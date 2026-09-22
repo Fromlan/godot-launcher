@@ -1,23 +1,26 @@
-import { promises as fs } from 'node:fs';
 import { AppConfig, DEFAULT_APP_CONFIG } from '../../shared/types/settings';
-import { ensureDir, getConfigPath, getUserDataDir } from '../utils/path';
+import { SCHEMA_VERSION } from '../../shared/constants/schema';
+import { getConfigPath } from '../utils/path';
+import { readJsonSafe, writeJsonAtomic, injectSchemaVersion } from '../utils/migrate';
 import { setAutoLaunch } from '../autoLaunch';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('settings-service');
 
+type StoredAppConfig = AppConfig & { schemaVersion: number };
+
 async function readConfig(): Promise<AppConfig> {
-  try {
-    const buf = await fs.readFile(getConfigPath(), 'utf-8');
-    return { ...DEFAULT_APP_CONFIG, ...(JSON.parse(buf) as Partial<AppConfig>) };
-  } catch {
-    return { ...DEFAULT_APP_CONFIG };
-  }
+  const stored = await readJsonSafe<StoredAppConfig>(getConfigPath());
+  if (!stored) return { ...DEFAULT_APP_CONFIG };
+  const migrated = injectSchemaVersion(stored, SCHEMA_VERSION);
+  // 缺字段时填默认值(向后兼容)
+  const { schemaVersion: _sv, ...rest } = migrated;
+  return { ...DEFAULT_APP_CONFIG, ...rest } as AppConfig;
 }
 
 async function writeConfig(cfg: AppConfig): Promise<void> {
-  await ensureDir(getUserDataDir());
-  await fs.writeFile(getConfigPath(), JSON.stringify(cfg, null, 2), 'utf-8');
+  const payload: StoredAppConfig = { schemaVersion: SCHEMA_VERSION, ...cfg };
+  await writeJsonAtomic(getConfigPath(), payload);
 }
 
 export async function getSettings(): Promise<AppConfig> {
@@ -27,7 +30,6 @@ export async function getSettings(): Promise<AppConfig> {
 export async function setSettings(patch: Partial<AppConfig>): Promise<AppConfig> {
   const cur = await readConfig();
   const next = { ...cur, ...patch };
-  // 联动开机自启
   if (patch.autoLaunch !== undefined && patch.autoLaunch !== cur.autoLaunch) {
     try {
       setAutoLaunch(next.autoLaunch);

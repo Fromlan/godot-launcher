@@ -12,3 +12,13 @@ Thumbs.db
 .vscode/
 .env
 .env.*
+
+# Playwright 测试产物
+test-results/
+playwright-report/
+
+# 设计资源 / 候选图(不进版本控制)
+.icon-candidates/
+
+# Node
+*.tsbuildinfo

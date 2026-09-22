@@ -1,10 +1,11 @@
-import { promises as fs } from 'node:fs';
+import { readJsonSafe, writeJsonAtomic, injectSchemaVersion } from '../utils/migrate';
+import { SCHEMA_VERSION } from '../../shared/constants/schema';
 import { fetch } from 'undici';
 import { GODOT_RELEASES_REPO, RELEASES_CACHE_TTL_MS } from '../../shared/constants/godot';
 import type { ReleaseInfo } from '../../shared/types/godot';
 import type { GodotChannel } from '../../shared/constants/godot';
 import { createLogger } from '../utils/logger';
-import { getReleasesCachePath, ensureDir, getUserDataDir } from '../utils/path';
+import { getReleasesCachePath } from '../utils/path';
 
 const log = createLogger('godot-release-source');
 
@@ -25,6 +26,7 @@ interface GitHubRelease {
 interface CachePayload {
   cachedAt: number;
   releases: ReleaseInfo[];
+  schemaVersion?: number;
 }
 
 /** 将 GitHub Release 转换为内部 ReleaseInfo,仅匹配 win64 + mono 变体 */
@@ -75,7 +77,7 @@ function parseTagKey(tag: string): number[] {
   const minor = parseInt(m[2], 10);
   const patch = m[3] ? parseInt(m[3], 10) : 0;
   const suffix = (m[4] || '').toLowerCase();
-  let typeRank = SUFFIX_RANK[suffix] ?? 5;
+  const typeRank = SUFFIX_RANK[suffix] ?? 5;
   let suffixNum = 0;
   const numMatch = /(\d+)/.exec(suffix);
   if (numMatch) suffixNum = parseInt(numMatch[1], 10);
@@ -117,18 +119,14 @@ async function fetchFromNetwork(): Promise<ReleaseInfo[]> {
 }
 
 async function loadCache(): Promise<CachePayload | null> {
-  try {
-    const buf = await fs.readFile(getReleasesCachePath(), 'utf-8');
-    return JSON.parse(buf) as CachePayload;
-  } catch {
-    return null;
-  }
+  const stored = await readJsonSafe<CachePayload>(getReleasesCachePath());
+  if (!stored) return null;
+  return injectSchemaVersion(stored, SCHEMA_VERSION) as CachePayload;
 }
 
 async function saveCache(releases: ReleaseInfo[]): Promise<void> {
-  await ensureDir(getUserDataDir());
-  const payload: CachePayload = { cachedAt: Date.now(), releases };
-  await fs.writeFile(getReleasesCachePath(), JSON.stringify(payload), 'utf-8');
+  const payload: CachePayload = { schemaVersion: SCHEMA_VERSION, cachedAt: Date.now(), releases };
+  await writeJsonAtomic(getReleasesCachePath(), payload);
 }
 
 /** 列出 Godot 可用版本(win64 + mono),带本地缓存 */
@@ -161,3 +159,6 @@ export async function listReleases(opts: { forceRefresh?: boolean } = {}): Promi
     throw err;
   }
 }
+
+
+

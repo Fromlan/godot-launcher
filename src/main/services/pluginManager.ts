@@ -1,11 +1,30 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { unzip } from '../utils/unzip';
 import { fetch } from 'undici';
 import type { PluginEntry, AssetLibItem } from '../../shared/types/plugin';
-import { ASSET_LIB_BASE } from '../../shared/constants/godot';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('plugin-manager');
+
+/** Per-(projectPath,pluginName) 串行队列,避免同名插件并发 toggle 竞态 */
+const locks = new Map<string, Promise<unknown>>();
+
+function lockKey(projectPath: string, pluginName: string): string {
+  return projectPath + '||' + pluginName;
+}
+
+export async function runPluginOp<T>(projectPath: string, pluginName: string, op: () => Promise<T>): Promise<T> {
+  const key = lockKey(projectPath, pluginName);
+  const prev = locks.get(key) || Promise.resolve();
+  const next = prev.then(op, op);
+  locks.set(key, next.catch(() => undefined));
+  try {
+    return await next;
+  } finally {
+    if (locks.get(key) === next.catch(() => undefined)) locks.delete(key);
+  }
+}
 
 /**
  * 解析 plugin.cfg
@@ -25,7 +44,14 @@ function parsePluginCfg(text: string): { name: string; description: string; auth
       continue;
     }
     const kv = /^([^=]+)=(.*)$/.exec(line);
-    if (kv && section) data[section][kv[1].trim()] = kv[2].trim();
+    if (kv && section) {
+      let v = kv[2].trim();
+      // 去掉首尾引号(INI 中 name="Foo" 是常见写法)
+      if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+        v = v.slice(1, -1);
+      }
+      data[section][kv[1].trim()] = v;
+    }
   }
   const p = data.plugin || {};
   return {
@@ -91,19 +117,45 @@ export async function listLocalPlugins(projectPath: string): Promise<PluginEntry
  * 切换启用状态
  * - 当前启用 → 重命名 plugin.cfg → plugin.cfg.disabled
  * - 当前禁用 → 重命名 plugin.cfg.disabled → plugin.cfg
+ * 同名并发调用由 runPluginOp 串行化,避免读状态 → 改名竞态。
  */
-export async function togglePlugin(projectPath: string, pluginName: string): Promise<PluginEntry> {
-  const dir = path.join(projectPath, 'addons', pluginName);
-  const enabledPath = path.join(dir, 'plugin.cfg');
-  const disabledPath = path.join(dir, 'plugin.cfg.disabled');
-  const isEnabled = await readIfExists(enabledPath).then(Boolean);
-  if (isEnabled) {
-    await fs.rename(enabledPath, disabledPath);
-  } else {
-    const exists = await readIfExists(disabledPath);
-    if (!exists) throw new Error('找不到 plugin.cfg.disabled');
-    await fs.rename(disabledPath, enabledPath);
-  }
+export function togglePlugin(projectPath: string, pluginName: string): Promise<PluginEntry> {
+  return runPluginOp(projectPath, pluginName, async () => {
+    const dir = path.join(projectPath, 'addons', pluginName);
+    const enabledPath = path.join(dir, 'plugin.cfg');
+    const disabledPath = path.join(dir, 'plugin.cfg.disabled');
+    const isEnabled = await readIfExists(enabledPath).then(Boolean);
+    if (isEnabled) {
+      try {
+        await fs.rename(enabledPath, disabledPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          // 竞态兜底:其它调用已经先重命名了,再读一次决定结果
+          const exists = await readIfExists(disabledPath).then(Boolean);
+          if (!exists) throw err;
+          return pluginsAfter(projectPath, pluginName);
+        }
+        throw err;
+      }
+    } else {
+      const exists = await readIfExists(disabledPath);
+      if (!exists) throw new Error('找不到 plugin.cfg.disabled');
+      try {
+        await fs.rename(disabledPath, enabledPath);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+          const exists2 = await readIfExists(enabledPath).then(Boolean);
+          if (!exists2) throw err;
+          return pluginsAfter(projectPath, pluginName);
+        }
+        throw err;
+      }
+    }
+    return pluginsAfter(projectPath, pluginName);
+  });
+}
+
+async function pluginsAfter(projectPath: string, pluginName: string): Promise<PluginEntry> {
   const plugins = await listLocalPlugins(projectPath);
   const found = plugins.find((p) => p.name === pluginName);
   if (!found) throw new Error('插件切换后丢失');
@@ -132,9 +184,6 @@ export async function installFromAssetLib(args: {
 
   const targetDir = path.join(projectPath, 'addons', slug);
   await fs.mkdir(targetDir, { recursive: true });
-  // 通过 require 引入 unzip(避免在 ts 中重复 import 复杂逻辑)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { unzip } = require('../utils/unzip');
   await unzip(cacheFile, targetDir, { stripTopLevel: true });
 
   // 解析并启用
@@ -153,3 +202,10 @@ export async function installFromAssetLib(args: {
     enabled: true
   };
 }
+
+
+
+
+
+
+

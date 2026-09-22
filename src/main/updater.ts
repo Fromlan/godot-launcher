@@ -23,7 +23,7 @@ export async function checkForUpdate(): Promise<unknown> {
   }
   status = 'checking';
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+     
     const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
     autoUpdater.logger = {
       info: (...args: unknown[]) => log.info(...args),
@@ -60,7 +60,7 @@ export async function checkForUpdate(): Promise<unknown> {
 
 export async function installDownloadedUpdate(): Promise<void> {
   if (!app.isPackaged) return;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { autoUpdater } = require('electron-updater') as typeof import('electron-updater');
   autoUpdater.quitAndInstall();
 }

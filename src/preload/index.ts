@@ -43,7 +43,10 @@ const api = {
     setSettings: (patch: unknown) => call('system:set-settings', { patch }),
     checkUpdate: () => call('system:check-update'),
     getAppVersion: () => call('system:get-app-version'),
-    revealLogs: () => call('system:reveal-logs')
+    revealLogs: () => call('system:reveal-logs'),
+    listLogs: () => call('system:list-logs'),
+    readLog: (args: { name: string; maxBytes?: number }) => call('system:read-log', args),
+    clearLogs: () => call('system:clear-logs')
   }
 };
 

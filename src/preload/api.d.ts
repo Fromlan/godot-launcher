@@ -1,4 +1,4 @@
-import type { IpcChannel, IpcEvent, IpcResult } from '../shared/types/ipc';
+import type { IpcChannel, IpcEvent, IpcResult, LogFileInfo } from '../shared/types/ipc';
 import type { GodotVersion, ReleaseInfo, DownloadProgress } from '../shared/types/godot';
 import type { ProjectEntry, LaunchOptions } from '../shared/types/project';
 import type { PluginEntry, AssetLibSearchQuery, AssetLibSearchResult, AssetLibItem } from '../shared/types/plugin';
@@ -37,6 +37,9 @@ interface GodotLauncherApi {
     checkUpdate(): Promise<IpcResult<{ status: string; info?: unknown }>>;
     getAppVersion(): Promise<IpcResult<{ version: string; electron: string; node: string }>>;
     revealLogs(): Promise<IpcResult<void>>;
+    listLogs(): Promise<IpcResult<LogFileInfo[]>>;
+    readLog(args: { name: string; maxBytes?: number }): Promise<IpcResult<string>>;
+    clearLogs(): Promise<IpcResult<{ cleared: number }>>;
   };
 }
 

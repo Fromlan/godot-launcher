@@ -1,4 +1,4 @@
-import { BrowserWindow, app, shell } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { createLogger } from './utils/logger';
 
@@ -54,8 +54,7 @@ export function createMainWindow(): BrowserWindow {
   }
 
   mainWindow.on('close', (e) => {
-    const cfg = app.getLoginItemSettings();
-    void cfg;
+    // closeToTray 行为由 main/index.ts 中 before-quit 的 isQuitting 控制
     if (!isQuitting) {
       e.preventDefault();
       mainWindow?.hide();
@@ -68,4 +67,6 @@ export function createMainWindow(): BrowserWindow {
 
   return mainWindow;
 }
+
+
 

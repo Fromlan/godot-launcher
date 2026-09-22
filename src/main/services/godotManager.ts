@@ -1,9 +1,13 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fetch } from 'undici';
-import { GODOT_DEFAULT_ARGS, GODOT_EXE_NAMES } from '../../shared/constants/godot';
+import { unzip } from '../utils/unzip';
+import { readJsonSafe, writeJsonAtomic, injectSchemaVersion } from '../utils/migrate';
+import { SCHEMA_VERSION } from '../../shared/constants/schema';
 import { sortReleases } from './godotReleaseSource';
+import { GODOT_DEFAULT_ARGS, GODOT_EXE_NAMES } from '../../shared/constants/godot';
 import type { GodotVersion, ReleaseInfo, DownloadProgress } from '../../shared/types/godot';
 import type { ProjectEntry, LaunchOptions } from '../../shared/types/project';
 import {
@@ -15,69 +19,53 @@ import {
   makeVersionId,
   dirSize
 } from '../utils/path';
-import { unzip } from '../utils/unzip';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('godot-manager');
 
 type ProgressCallback = (progress: DownloadProgress) => void;
+type StoredVersion = GodotVersion & { schemaVersion: number };
 
 async function readManifest(): Promise<GodotVersion[]> {
-  try {
-    const buf = await fs.readFile(getVersionsManifestPath(), 'utf-8');
-    return JSON.parse(buf) as GodotVersion[];
-  } catch {
-    return [];
-  }
+  const stored = await readJsonSafe<StoredVersion[]>(getVersionsManifestPath());
+  if (!stored) return [];
+  return stored.map((v) => {
+    const migrated = injectSchemaVersion(v, SCHEMA_VERSION);
+    const { schemaVersion: _sv, ...rest } = migrated;
+    return rest as GodotVersion;
+  });
 }
 
 async function writeManifest(versions: GodotVersion[]): Promise<void> {
   await ensureDir(getUserDataDir());
-  await fs.writeFile(getVersionsManifestPath(), JSON.stringify(versions, null, 2), 'utf-8');
+  const payload: StoredVersion[] = versions.map((v) => ({ schemaVersion: SCHEMA_VERSION, ...v }));
+  await writeJsonAtomic(getVersionsManifestPath(), payload);
 }
 
-/**
- * 在解压目录中定位 Godot 可执行文件
- * - mono:文件名包含 _mono
- * - 否则 Godot_v4.exe / Godot.exe
- */
+/** 定位 Godot 可执行文件;兼容老版本命名 */
 export function resolveExecutable(installPath: string, channel: 'stable' | 'mono'): string | null {
-  // 简化版:实际上我们解压得到的是单一顶层目录,installPath 即顶层目录
-  const exeCandidates = channel === 'mono' ? ['Godot_v4_mono.exe', 'Godot_mono.exe'] : [GODOT_EXE_NAMES.win64, 'Godot.exe'];
-  // 注意:Godot 4.x 实际文件名通常是 Godot_v4.exe(无 _mono 后缀,区别在内容)
-  // 我们以 channel 为准:稳定版找 Godot_v4.exe,mono 版也找 Godot_v4.exe(因 Godot 官方 4 mono 命名相同)
-  // 为兼容老版本,仍优先尝试 mono 后缀
-  const list = channel === 'mono' ? ['Godot_v4_mono.exe', 'Godot_mono.exe', GODOT_EXE_NAMES.win64, 'Godot.exe'] : [GODOT_EXE_NAMES.win64, 'Godot.exe'];
+  const list = channel === 'mono'
+    ? ['Godot_v4_mono.exe', 'Godot_mono.exe', GODOT_EXE_NAMES.win64, 'Godot.exe']
+    : [GODOT_EXE_NAMES.win64, 'Godot.exe'];
   for (const name of list) {
     const candidate = path.join(installPath, name);
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('node:fs').accessSync(candidate);
-      return candidate;
-    } catch {
-      // 继续
-    }
+    if (existsSync(candidate)) return candidate;
   }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  void exeCandidates;
   return null;
 }
 
 /** 列出已安装版本 */
 export async function listInstalled(): Promise<GodotVersion[]> {
   const manifest = await readManifest();
-  // 重新计算每个版本的 sizeBytes 与 executablePath,以反映磁盘真实状态
   const live: GodotVersion[] = [];
   for (const v of manifest) {
     try {
       const stat = await fs.stat(v.installPath);
       if (!stat.isDirectory()) continue;
-      // 优先使用 manifest 里记录的 executablePath(用户可能选了非标准名 exe)
       let exe: string | null = null;
       if (v.executablePath) {
         try { await fs.access(v.executablePath); exe = v.executablePath; } catch {}
       }
-      // fallback:按 channel 推断标准文件名
       if (!exe) exe = resolveExecutable(v.installPath, v.channel);
       if (!exe) continue;
       const size = await dirSize(v.installPath);
@@ -87,7 +75,6 @@ export async function listInstalled(): Promise<GodotVersion[]> {
     }
   }
   if (live.length !== manifest.length) await writeManifest(live);
-  // 按版本号降序,缓存与运行时一致
   return sortInstalled(live);
 }
 
@@ -103,8 +90,9 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
   const { tag, channel, release, onProgress } = args;
   const versionId = makeVersionId(tag, channel, 'win64');
   const installPath = path.join(getVersionsDir(), versionId);
+  const tmpZip = path.join(getVersionsDir(), `${versionId}.zip.part`);
 
-  // 若已存在则直接返回
+  // 已存在则直接返回
   const existing = await listInstalled();
   const found = existing.find((v) => v.id === versionId);
   if (found) {
@@ -113,10 +101,11 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
   }
 
   await ensureDir(getVersionsDir());
-  const tmpZip = path.join(getVersionsDir(), `${versionId}.zip.part`);
   await ensureDir(path.dirname(tmpZip));
 
-  // 下载
+  // 下载前清理残留 .zip.part(防止上次中断留下)
+  try { await fs.unlink(tmpZip); } catch { /* ignore */ }
+
   const emit = (p: Partial<DownloadProgress> & Pick<DownloadProgress, 'phase'>) => {
     onProgress?.({
       tag,
@@ -129,63 +118,40 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
       message: p.message
     });
   };
-  emit({ phase: 'downloading', percent: 0 });
 
+  // 下载
+  emit({ phase: 'downloading', percent: 0 });
   const res = await fetch(release.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
   if (!res.ok || !res.body) throw new Error(`download failed ${res.status}`);
-  const fileOut = (await fs.open(tmpZip, 'w')).createWriteStream();
+  const total = Number(res.headers.get('content-length') || release.sizeBytes) || release.sizeBytes;
   let received = 0;
-  const total = Number(res.headers.get('content-length')) || release.sizeBytes;
-  for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
-    received += chunk.length;
-    fileOut.write(chunk);
-    emit({ phase: 'downloading', receivedBytes: received, totalBytes: total, percent: Math.round((received / total) * 100) });
+  const fileHandle = await fs.open(tmpZip, 'w');
+  try {
+    for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
+      await fileHandle.write(chunk);
+      received += chunk.length;
+      const percent = total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : 0;
+      emit({ phase: 'downloading', receivedBytes: received, totalBytes: total, percent });
+    }
+  } finally {
+    await fileHandle.close();
   }
-  await new Promise<void>((resolve, reject) => {
-    fileOut.end((err: unknown) => (err ? reject(err) : resolve()));
-  });
 
   // 解压
-  emit({ phase: 'extracting', receivedBytes: received, totalBytes: total, percent: 100, message: '准备解压...' });
-  await ensureDir(installPath);
+  emit({ phase: 'extracting', percent: 100 });
+  await unzip(tmpZip, installPath, { stripTopLevel: true });
+  // 删除临时 zip
+  try { await fs.unlink(tmpZip); } catch { /* ignore */ }
 
-  // 解压心跳:每 ~600ms emit 一次进度,避免前端看起来像卡死
-  let lastTickAt = 0;
-  const extractStart = Date.now();
-  try {
-    await unzip(tmpZip, installPath, {
-      stripTopLevel: true,
-      onProgress: (info) => {
-        const now = Date.now();
-        if (now - lastTickAt > 600) {
-          lastTickAt = now;
-          const totalDisp = info.total > 0 ? (info.index + '/' + info.total) : ('' + info.index);
-          emit({
-            phase: 'extracting',
-            receivedBytes: info.bytesProcessed,
-            totalBytes: info.bytesProcessed,
-            percent: info.total > 0 ? Math.min(99, Math.round((info.index / info.total) * 100)) : 99,
-            message: '解压中 ' + totalDisp + ' (' + info.entryName + ')'
-          });
-        }
-      }
-    });
-    log.info('unzip finished in', Date.now() - extractStart, 'ms');
-  } catch (err) {
-    log.error('unzip failed', err);
-    throw err;
-  } finally {
-    await fs.unlink(tmpZip).catch(() => {});
-  }
-
-  // 解析可执行文件
+  // 定位 exe
   const exe = resolveExecutable(installPath, channel);
-  if (!exe) throw new Error('未找到 Godot 可执行文件,zip 内容异常');
+  if (!exe) throw new Error('解压完成但未找到 Godot .exe,请检查 zip 内容');
 
-  const installed: GodotVersion = {
+  // 写 manifest
+  const version: GodotVersion = {
     id: versionId,
     tag,
-    label: release.label,
+    label: release.label || tag,
     channel,
     platform: 'win64',
     installPath,
@@ -193,50 +159,29 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
     sizeBytes: await dirSize(installPath),
     installedAt: new Date().toISOString()
   };
-
-  const manifest = await readManifest();
-  const next = manifest.filter((v) => v.id !== installed.id).concat(installed);
-  await writeManifest(next);
-
-  emit({ phase: 'done', receivedBytes: installed.sizeBytes, totalBytes: installed.sizeBytes, percent: 100 });
-  return installed;
+  const next2 = [...existing, version];
+  await writeManifest(next2);
+  emit({ phase: 'done', percent: 100, receivedBytes: version.sizeBytes, totalBytes: version.sizeBytes });
+  return version;
 }
 
-/** 删除已安装版本 */
-
-
-export interface ImportExistingArgs {
-  /** 用户选择的 Godot.exe 绝对路径 */
+interface ImportExistingArgs {
   executablePath: string;
 }
 
-/**
- * 从父目录名推断 tag + channel(支持 Godot_v4.6.2-stable_win64 等常见命名)
- * 失败时回退到基于文件名的简单推断
- */
+/** 从文件名 / 父目录名解析 tag 和 channel */
 function parseFromFolderName(name: string): { tag: string; channel: 'stable' | 'mono' } | null {
-  // 常见形态:
-  //   Godot_v4.6.2-stable_win64
-  //   Godot_v4.6.2-stable_mono_win64
-  //   Godot_v4.7-dev6_win64
-  //   Godot_v4.6.2-stable
   const lower = name.toLowerCase();
   const channel: 'stable' | 'mono' = lower.includes('mono') ? 'mono' : 'stable';
-  // 抽取版本号与后缀:Godot_vX.Y.Z-suffix 或 Godot_vX.Y-suffix
   const m = /godot[_-]?v?(\d+\.\d+(?:\.\d+)?)(?:[-_]([a-z0-9]+))?/i.exec(name);
   if (!m) return null;
   const ver = m[1];
   const suffix = m[2] || '';
-  // tag 形如 4.6.2-stable 或 4.8-dev6
-  const tag = suffix ? (ver + '-' + suffix) : ver;
+  const tag = suffix ? ver + '-' + suffix : ver;
   return { tag, channel };
 }
 
-/**
- * 导入一个本地已存在的 Godot 编辑器(不下载)。
- * 自动从父目录名推断 tag 与 channel,并校验 .exe 文件存在。
- * 若 id 已在清单中,返回原记录而不重复登记。
- */
+/** 导入本地已存在的 Godot 编辑器(不下载) */
 export async function importExisting(args: ImportExistingArgs): Promise<GodotVersion> {
   const exe = path.resolve(args.executablePath);
   const stat = await fs.stat(exe).catch(() => null);
@@ -247,22 +192,18 @@ export async function importExisting(args: ImportExistingArgs): Promise<GodotVer
   const parentDir = path.dirname(exe);
   const parentName = path.basename(parentDir);
 
-  // 优先从父目录名推断,失败则用文件名
   let inferred = parseFromFolderName(parentName);
   if (!inferred) inferred = parseFromFolderName(fileName);
   if (!inferred) {
-    // 兜底:用 parentName 作为 tag
     inferred = { tag: parentName.replace(/^Godot[_-]?v?/i, '') || parentName, channel: fileName.toLowerCase().includes('mono') ? 'mono' : 'stable' };
   }
 
   const id = makeVersionId(inferred.tag, inferred.channel, 'win64');
   const label = inferred.tag;
 
-  // 已存在则返回原记录
   const manifest = await readManifest();
   const existed = manifest.find((v) => v.id === id);
   if (existed) {
-    // 但要更新 installPath/executablePath(用户可能换了个目录)
     const refreshed = { ...existed, installPath: parentDir, executablePath: exe };
     const next = manifest.map((v) => (v.id === id ? refreshed : v));
     await writeManifest(next);
@@ -284,13 +225,21 @@ export async function importExisting(args: ImportExistingArgs): Promise<GodotVer
   return version;
 }
 
-/** 删除已安装版本 */
-/** 删除已安装版本 */
+/** 删除已安装版本(含 .zip / .zip.part 残留清理) */
 export async function removeVersion(versionId: string): Promise<void> {
   const manifest = await readManifest();
   const target = manifest.find((v) => v.id === versionId);
   if (!target) return;
+  // 1. 删除解压目录
   await fs.rm(target.installPath, { recursive: true, force: true });
+  // 2. 清理可能的 .zip / .zip.part 残留(理论上 .part 已被下载流程清理,但兜底)
+  const versionsDir = getVersionsDir();
+  for (const suffix of ['', '.zip', '.zip.part']) {
+    try {
+      await fs.unlink(path.join(versionsDir, versionId + suffix));
+    } catch { /* ignore */ }
+  }
+  // 3. 从 manifest 移除
   await writeManifest(manifest.filter((v) => v.id !== versionId));
 }
 
@@ -323,22 +272,22 @@ export async function launchProject(ctx: LaunchContext): Promise<{ logFile: stri
   });
 
   const writeStream = (await fs.open(logFile, 'w')).createWriteStream();
-  child.stdout?.pipe(writeStream);
-  child.stderr?.pipe(writeStream);
-  child.on('exit', (code) => {
-    writeStream.write(`\n[exit code=${code ?? 'null'}]\n`);
+  let streamEnded = false;
+  const safeEnd = () => {
+    if (streamEnded) return;
+    streamEnded = true;
     writeStream.end();
+  };
+  writeStream.on('error', (err) => log.warn('launchProject writeStream error', err));
+  child.on('exit', (code) => {
+    writeStream.write(`\n[exit code=${code ?? 'null'}]\n`, safeEnd);
   });
   if (options.detached) child.unref();
 
   return { logFile, pid: child.pid ?? null };
 }
 
-
-/**
- * 对已安装版本按版本号降序排序(stable 优先于 mono,稳定版优先于 dev/rc)。
- * 复用 godotReleaseSource.compareReleases 的语义。
- */
+/** 对已安装版本按版本号降序排序(stable 优先于 mono) */
 export function sortInstalled(list: GodotVersion[]): GodotVersion[] {
   const asReleases = list.map((v) => ({
     tag: v.tag,

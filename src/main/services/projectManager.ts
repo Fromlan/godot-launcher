@@ -3,23 +3,25 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import type { ProjectEntry, ProjectMeta } from '../../shared/types/project';
-import { getProjectsManifestPath, ensureDir, getUserDataDir } from '../utils/path';
-import { createLogger } from '../utils/logger';
+import { getProjectsManifestPath } from '../utils/path';
+import { readJsonSafe, writeJsonAtomic, injectSchemaVersion } from '../utils/migrate';
+import { SCHEMA_VERSION } from '../../shared/constants/schema';
 
-const log = createLogger('project-manager');
+type StoredProject = ProjectEntry & { schemaVersion: number };
 
 async function readManifest(): Promise<ProjectEntry[]> {
-  try {
-    const buf = await fs.readFile(getProjectsManifestPath(), 'utf-8');
-    return JSON.parse(buf) as ProjectEntry[];
-  } catch {
-    return [];
-  }
+  const stored = await readJsonSafe<StoredProject[]>(getProjectsManifestPath());
+  if (!stored) return [];
+  return stored.map((p) => {
+    const migrated = injectSchemaVersion(p, SCHEMA_VERSION);
+    const { schemaVersion: _sv, ...rest } = migrated;
+    return rest as ProjectEntry;
+  });
 }
 
 async function writeManifest(list: ProjectEntry[]): Promise<void> {
-  await ensureDir(getUserDataDir());
-  await fs.writeFile(getProjectsManifestPath(), JSON.stringify(list, null, 2), 'utf-8');
+  const payload: StoredProject[] = list.map((p) => ({ schemaVersion: SCHEMA_VERSION, ...p }));
+  await writeJsonAtomic(getProjectsManifestPath(), payload);
 }
 
 /**
@@ -46,7 +48,7 @@ export async function parseProjectGodot(projectPath: string): Promise<ProjectMet
       const key = kv[1].trim();
       let value = kv[2].trim();
       // 去掉首尾引号
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
       data[section][key] = value;
@@ -55,7 +57,12 @@ export async function parseProjectGodot(projectPath: string): Promise<ProjectMet
   const config = data['config'] || {};
   const app = data['application'] || {};
   const featuresRaw = config['features'] || '';
-  const features = featuresRaw.replace(/^[\["']|[\]"]/g, '').split(/[ ,]+/).filter(Boolean);
+  // 去掉数组外层的 [ ] 和引号
+  const features = featuresRaw
+    .replace(/^[[^\]]+\]/g, '')
+    .replace(/\[|\]|"|'/g, '')
+    .split(/[ ,]+/)
+    .filter(Boolean);
   return {
     configVersion: config['version'] || '',
     isMono: features.includes('mono') || features.includes('c#'),
@@ -64,30 +71,28 @@ export async function parseProjectGodot(projectPath: string): Promise<ProjectMet
   };
 }
 
-/** 推荐 Godot 版本:返回 configVersion 字符串(如 4.6);调用方与已安装清单匹配 */
-export function recommendVersion(meta: ProjectMeta): string | undefined {
-  if (!meta.configVersion) return undefined;
-  const m = /(\d+\.\d+)/.exec(meta.configVersion);
-  return m ? m[1] : undefined;
+function genId(): string {
+  return crypto.randomUUID();
 }
 
+/** 列出已登记项目 */
+export async function listProjects(): Promise<ProjectEntry[]> {
+  return readManifest();
+}
+
+/** 添加项目(自动解析 project.godot) */
 export async function addProject(projectPath: string): Promise<ProjectEntry> {
   const abs = path.resolve(projectPath);
-  const exists = await fs.stat(abs).then((s) => s.isDirectory()).catch(() => false);
-  if (!exists) throw new Error(`目录不存在: ${abs}`);
-  const pg = path.join(abs, 'project.godot');
+  const projectFile = path.join(abs, 'project.godot');
   try {
-    await fs.access(pg);
+    const stat = await fs.stat(projectFile);
+    if (!stat.isFile()) throw new Error('project.godot 不是文件');
   } catch {
-    throw new Error(`该目录不含 project.godot: ${abs}`);
+    throw new Error('未找到 project.godot,请选择项目根目录');
   }
   const meta = await parseProjectGodot(abs);
-  const list = await readManifest();
-  if (list.some((p) => path.resolve(p.path) === abs)) {
-    throw new Error('该项目已存在');
-  }
   const entry: ProjectEntry = {
-    id: crypto.randomUUID(),
+    id: genId(),
     path: abs,
     name: meta.name || path.basename(abs),
     godotVersion: meta.configVersion,
@@ -95,55 +100,52 @@ export async function addProject(projectPath: string): Promise<ProjectEntry> {
     addedAt: new Date().toISOString(),
     launchCount: 0
   };
-  list.push(entry);
-  await writeManifest(list);
+  const list = await readManifest();
+  // 重复 path 直接返回已有
+  const dup = list.find((p) => p.path === abs);
+  if (dup) return dup;
+  await writeManifest([...list, entry]);
   return entry;
 }
 
+/** 移除项目 */
 export async function removeProject(id: string): Promise<void> {
   const list = await readManifest();
   await writeManifest(list.filter((p) => p.id !== id));
 }
 
+/** 更新项目字段 */
 export async function updateProject(id: string, patch: Partial<ProjectEntry>): Promise<ProjectEntry> {
   const list = await readManifest();
   const idx = list.findIndex((p) => p.id === id);
   if (idx < 0) throw new Error('项目不存在');
-  list[idx] = { ...list[idx], ...patch, id: list[idx].id };
-  await writeManifest(list);
-  return list[idx];
+  const updated = { ...list[idx], ...patch };
+  const next = [...list];
+  next[idx] = updated;
+  await writeManifest(next);
+  return updated;
 }
 
-export async function listProjects(): Promise<ProjectEntry[]> {
-  const list = await readManifest();
-  // 重新读取每个项目的 project.godot,同步最新元数据(轻量)
-  const enriched: ProjectEntry[] = [];
-  for (const p of list) {
-    try {
-      const meta = await parseProjectGodot(p.path);
-      enriched.push({
-        ...p,
-        name: meta.name || p.name,
-        godotVersion: meta.configVersion,
-        isMono: meta.isMono
-      });
-    } catch {
-      enriched.push(p);
-    }
-  }
-  return enriched;
-}
-
+/** 标记项目最近启动 */
 export async function markLaunched(id: string): Promise<void> {
   const list = await readManifest();
-  const idx = list.findIndex((p) => p.id === id);
-  if (idx < 0) return;
-  list[idx] = { ...list[idx], lastOpenedAt: new Date().toISOString(), launchCount: (list[idx].launchCount || 0) + 1 };
+  const target = list.find((p) => p.id === id);
+  if (!target) return;
+  target.lastOpenedAt = new Date().toISOString();
+  target.launchCount = (target.launchCount || 0) + 1;
   await writeManifest(list);
 }
 
-/** 在文件管理器中显示项目 */
-export async function revealInExplorer(p: string): Promise<void> {
-  log.info('reveal', p);
-  spawn('explorer.exe', [p], { detached: true, stdio: 'ignore' }).unref();
+/** 在资源管理器中打开项目根目录 */
+export function recommendVersion(meta: ProjectMeta): string | undefined {
+  const m = /^(\d+\.\d+)/.exec(meta.configVersion || '');
+  return m ? m[1] : undefined;
 }
+
+export async function revealInExplorer(projectPath: string): Promise<void> {
+  const target = path.resolve(projectPath);
+  // Windows 用 explorer.exe;其他平台 spawn 平台命令即可(占位)
+  const cmd = process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
+  spawn(cmd, [target], { detached: true, stdio: 'ignore' }).unref();
+}
+
