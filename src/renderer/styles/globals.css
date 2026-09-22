@@ -662,6 +662,124 @@ input[type='checkbox']:focus-visible {
 .toast-warning::before { background: var(--gd-warning); }
 .toast-info { color: var(--gd-primary); }
 .toast-info::before { background: var(--gd-primary); }
+/* 关闭按钮 */
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--gd-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+  transition: color 120ms ease, background 120ms ease;
+}
+.toast-close:hover {
+  color: var(--gd-text);
+  background: rgba(255,255,255,0.06);
+}
+.toast-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 700;
+  width: 18px;
+  text-align: center;
+}
+.toast-message {
+  flex: 1;
+  word-break: break-word;
+}
+.toast-sticky {
+}
+.toast-progress {
+  position: absolute;
+  left: 3px;
+  bottom: 0;
+  right: 0;
+  height: 2px;
+  pointer-events: none;
+}
+.toast-progress-fill {
+  height: 100%;
+  background: currentColor;
+  transform-origin: left;
+  width: 100%;
+  will-change: transform;
+}
+
+/* ============================================================
+ * KEYBOARD HINT
+ * ============================================================
+.kbd {
+
+/* ============================================================
+ * LOG VIEWER
+ * ============================================================
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.log-item {
+  padding: 8px 10px;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--radius-sm);
+  background: var(--gd-bg-2);
+  cursor: pointer;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.log-item:hover {
+  background: var(--gd-bg-3);
+}
+.log-item.selected {
+  border-color: var(--gd-primary);
+  background: var(--gd-primary-soft);
+}
+.log-item-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--gd-text);
+  word-break: break-all;
+}
+.log-item-meta {
+  font-size: 11px;
+  color: var(--gd-text-muted);
+  margin-top: 2px;
+}
+.log-tail-wrap {
+  background: var(--gd-bg-0);
+  border: 1px solid var(--gd-border);
+  border-radius: var(--radius-sm);
+  min-height: 220px;
+  max-height: 360px;
+  overflow: auto;
+}
+.log-tail {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gd-text-dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--gd-border);
+  border-radius: var(--radius-xs);
+  background: var(--gd-bg-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--gd-text-dim);
+}
+
 
 @keyframes toastProgress {
   from { transform: scaleX(1); }

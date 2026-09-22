@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 
 interface ModalProps {
   open: boolean;
@@ -10,11 +10,24 @@ interface ModalProps {
   children: React.ReactNode;
 }
 
-export default function Modal({ open, title, onClose, onConfirm, confirmLabel = '确认', cancelLabel = '取消', children }: ModalProps) {
+export default function Modal({ open, title, onClose, onConfirm, confirmLabel = "确认", cancelLabel = "取消", children }: ModalProps) {
+  // Esc 关闭模态
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div className="modal-mask" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">{title}</div>
         {children}
         <div className="modal-actions">

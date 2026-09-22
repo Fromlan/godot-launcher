@@ -1,22 +1,51 @@
 import React from 'react';
 import { useToastStore } from '../stores/toastStore';
 
+function iconFor(kind: string): string {
+  if (kind === "success") return "\u2713";
+  if (kind === "error") return "\u2715";
+  if (kind === "warning") return "!";
+  return "\u2139";
+}
+
+function ProgressBar({ remaining, sticky, paused }: { remaining: number; sticky: boolean; paused: boolean }) {
+  if (sticky) return null;
+  // remaining 单位 ms;映射到 0..1(相对于默认 4500)
+  const ratio = Math.max(0, Math.min(1, remaining / 4500));
+  return (
+    <div className="toast-progress" aria-hidden>
+      <div className="toast-progress-fill" style={{ transform: `scaleX(${ratio})`, animationPlayState: paused ? "paused" : "running" }} />
+    </div>
+  );
+}
+
 export default function ToastHost() {
   const toasts = useToastStore((s) => s.toasts);
   const remove = useToastStore((s) => s.remove);
+  const pause = useToastStore((s) => s.pause);
+  const resume = useToastStore((s) => s.resume);
   return (
-    <div className="toast-host">
+    <div className="toast-host" role="region" aria-label="通知">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`toast toast-${t.kind}`}
-          onClick={() => remove(t.id)}
-          title="点击关闭"
+          className={`toast toast-${t.kind}${t.remaining < 0 ? " toast-sticky" : ""}`}
+          role={t.kind === "error" ? "alert" : "status"}
+          onMouseEnter={() => pause(t.id)}
+          onMouseLeave={() => resume(t.id)}
+          onFocus={() => pause(t.id)}
+          onBlur={() => resume(t.id)}
         >
-          <span style={{ flexShrink: 0, fontSize: 16, fontWeight: 700 }}>
-            {t.kind === 'success' ? '\u2713' : t.kind === 'error' ? '\u2715' : t.kind === 'warning' ? '!' : '\u2139'}
-          </span>
-          <span style={{ flex: 1 }}>{t.message}</span>
+          <span className="toast-icon" aria-hidden>{iconFor(t.kind)}</span>
+          <span className="toast-message">{t.message}</span>
+          <button
+            className="toast-close"
+            aria-label="关闭通知"
+            onClick={() => remove(t.id)}
+          >
+            {"\u00d7"}
+          </button>
+          <ProgressBar remaining={t.remaining} sticky={t.remaining < 0} paused={t.paused} />
         </div>
       ))}
     </div>
