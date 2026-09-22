@@ -1,0 +1,14 @@
+node_modules/
+dist-main/
+dist-preload/
+dist-renderer/
+out/
+.cache/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.env
+.env.*

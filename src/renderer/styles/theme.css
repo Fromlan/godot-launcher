@@ -1,0 +1,99 @@
+:root {
+  /* ============ 颜色:Godot 蓝主色不变,补充派生 ============ */
+  --gd-bg-0: #1A1A1C;
+  --gd-bg-1: #212124;
+  --gd-bg-2: #2A2A2E;
+  --gd-bg-3: #34343A;
+  --gd-bg-elevated: #26262A;
+  --gd-border: #38383D;
+  --gd-border-strong: #4A4A52;
+  --gd-text: #ECECEE;
+  --gd-text-dim: #B0B0B6;
+  --gd-text-muted: #75757D;
+
+  --gd-primary: #478CBF;
+  --gd-primary-hover: #5BA0D8;
+  --gd-primary-dim: #2F5E80;
+  --gd-primary-glow: rgba(71, 140, 191, 0.32);
+  --gd-primary-soft: rgba(71, 140, 191, 0.12);
+  --gd-accent: #6CAEDD;
+  --gd-success: #6BB66B;
+  --gd-warning: #E0A458;
+  --gd-danger: #CC6262;
+  --gd-link: #6CAEDD;
+
+  /* ============ 字体:Outfit 优先(走 @fontsource),无网络回退到 system ============ */
+  --font-ui: 'Outfit', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Outfit', 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  /* ============ 字号梯度(精确 1.2 / 1.25 倍率) ============ */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
+  --fs-3xl: 28px;
+  --fs-4xl: 36px;
+
+  /* ============ 字重 ============ */
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-black: 800;
+
+  /* ============ 行高 ============ */
+  --lh-tight: 1.15;
+  --lh-snug: 1.3;
+  --lh-normal: 1.55;
+  --lh-relaxed: 1.7;
+
+  /* ============ 字距(显示用与正文区分) ============ */
+  --ls-tighter: -0.02em;
+  --ls-tight: -0.01em;
+  --ls-wide: 0.02em;
+  --ls-wider: 0.08em;
+
+  /* ============ 间距尺度(8 倍率) ============ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ============ 圆角 ============ */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* ============ 阴影:含 glow 派生 ============ */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.42), 0 2px 4px rgba(0, 0, 0, 0.22);
+  --shadow-xl: 0 24px 56px rgba(0, 0, 0, 0.5), 0 4px 8px rgba(0, 0, 0, 0.24);
+  --shadow-glow: 0 0 0 1px var(--gd-primary-glow), 0 8px 28px var(--gd-primary-glow);
+  --shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.04), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+
+  /* ============ 缓动函数(cubic-bezier 精选) ============ */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ============ 过渡时长 ============ */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --dur-slower: 480ms;
+}

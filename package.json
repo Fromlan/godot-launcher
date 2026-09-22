@@ -1,0 +1,53 @@
+{
+  "name": "godot-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Godot 启动器,管理 Godot 版本/项目/插件的桌面应用",
+  "main": "dist-main/main/index.js",
+  "author": "Godot Launcher Contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:clean": "node scripts/dev.mjs --clean",
+    "dev:reset": "node scripts/dev.mjs --reset",
+    "dev:debug": "node scripts/dev.mjs --debug",
+    "dev:inspect": "node scripts/dev.mjs --inspect",
+    "dev:reset-debug": "node scripts/dev.mjs --reset --debug",
+    "dev:port": "node scripts/dev.mjs --port 5174",
+    "build:main": "tsc -p tsconfig.node.json",
+    "build:preload": "tsc -p tsconfig.preload.json",
+    "build:renderer": "vite build",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
+    "start": "npm run build:main && npm run build:preload && cross-env NODE_ENV=production electron .",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "npm run test:unit && npm run test:e2e",
+    "package": "npm run build && electron-builder --win nsis",
+    "lint": "echo skip-lint"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/yauzl": "^2.10.3",
+    "@vitejs/plugin-react": "^4.3.0",
+    "cross-env": "^7.0.3",
+    "electron": "^31.4.0",
+    "electron-builder": "^24.13.3",
+    "playwright": "^1.48.0",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-router-dom": "^6.26.0",
+    "undici": "^6.19.0",
+    "yauzl": "^3.1.3",
+    "zustand": "^4.5.0"
+  }
+}

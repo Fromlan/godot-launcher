@@ -1,0 +1,34 @@
+appId: dev.godotlauncher.app
+productName: Godot Launcher
+directories:
+  output: out
+  buildResources: resources
+files:
+  - dist-main/**/*
+  - dist-preload/**/*
+  - dist-renderer/**/*
+  - package.json
+  - "!**/*.map"
+asar: true
+asarUnpack:
+  - dist-preload/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Godot Launcher
+  uninstallDisplayName: Godot Launcher
+  include: resources/installer.nsh
+publish:
+  provider: github
+  owner: godot-launcher
+  repo: godot-launcher
+  releaseType: release
