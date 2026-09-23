@@ -42,7 +42,7 @@
 - **持久化**:用户配置 / 版本清单 / 项目库 / AssetLib 缓存 / 启动日志均存 `%APPDATA%`,**重启不丢**
 - **UI**:Godot 官方暗色风格,主色 `#478CBF`,微动效 + 卡片质感 + Hero 节奏
 - **类型安全**:三层独立 tsconfig,主/预/渲全栈 TypeScript 严格模式
-- **测试**:53 个单测覆盖 services/utils,Playwright E2E 框架就绪
+- **测试**:202 个单测(25 个 spec)+ 15 个新增覆盖 SHA-256 / ErrorBoundary / preload contract 等,Playwright E2E 框架就绪
 
 ## 截图
 
@@ -201,18 +201,45 @@ Godot-Launcher/
 
 ## 路线图
 
-### v0.2(计划)
+### v0.2 ✅(已完成)
+
+- 项目列表重命名(消费原 dead API `projects:update`)
+- preload 重构: `satisfies GodotLauncherApi` 编辑期全栈契约
+- GitHub Actions CI(`.github/workflows/ci.yml`)+ release(`.github/workflows/release.yml`)
+- Godot 下载 SHA-256 校验 + 流式写入 + 失败清理 `.zip.part`
+- AssetLib 安装从一次性 `Buffer.from(...)` 改为流式写入
+- `autoLaunch` dev 模式不再污染 Windows 注册表
+- 渲染端 ErrorBoundary + 路由 `React.lazy` 懒加载
+- `LICENSE` (MIT) + `.nvmrc` (Node 20) + `engines` 字段
+- vitest coverage thresholds + jsdom + ErrorBoundary 单测
+- 应用 logo + icon: 已选定 logo.png,生成 resources/icon.ico(16/32/48/64/128/256 多分辨率)与 resources/tray.ico(16/32),删除 .icon-candidates/ 备选目录
+
+### v0.3(计划)
 
 - 项目列表导出 / 导入(跨设备同步)
-- NSIS 卸载时询问是否清理 userData
+- NSIS 卸载时询问是否清理 userData(`resources/installer.nsh`)
 - macOS / Linux 支持(扩展 `resolveExecutable` 平台分支)
+- tray 真实图标(`resources/icon.ico` 由 `scripts/build-icon.mjs` 生成)
 
 ### v1.0(目标)
 
-- GitHub Actions CI:lint + 单测 + build + E2E + 自动出包
-- Auto-update 走完整 `electron-updater` 流程
+- 自动发布流水线(`v*` tag 触发, 上传 NSIS 包到 GitHub Releases)
+- Auto-update 走完整 `electron-updater` 流程(设置 `GH_TOKEN` 后)
 - OAuth 登录 AssetLib(可选)
 - 命令行参数预设编辑器 + 项目模板
+
+## 发布
+
+在仓库设 Settings → Secrets and variables → Actions 中配置 `GH_TOKEN`(classic PAT, `repo` scope)。
+
+```
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+`v*` tag 推送后会触发 `.github/workflows/release.yml`, 自动出 NSIS 包并上传到 GitHub Release。
+
+如果没有 `GH_TOKEN`, workflow 会在推送阶段明确报错。
 
 ## 常见问题
 

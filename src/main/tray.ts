@@ -1,4 +1,5 @@
 import { Tray, Menu, app, nativeImage, BrowserWindow } from 'electron';
+import path from 'node:path';
 import { listProjects } from './services/projectManager';
 import { checkForUpdate } from './updater';
 import { IPC_EVENTS } from '../shared/types/ipc';
@@ -12,10 +13,17 @@ let cachedMenu: Menu | null = null;
 type GetWindow = () => BrowserWindow | null;
 
 /**
- * 构造 1x1 透明图标,作为 tray 图标的占位实现。
- * 真实图标待 v0.3 图标 PR 引入 resources/tray.ico 后切换。
+ * 加载 resources/tray.ico 作为托盘图标;若文件不存在则 fallback 到 16x16 透明占位。
+ * 在打包构建后,resources/tray.ico 由 scripts/build-icon.mjs 生成。
  */
-function placeholderIcon(): Electron.NativeImage {
+function loadTrayIcon(): Electron.NativeImage {
+  try {
+    const icoPath = path.join(__dirname, '../../resources/tray.ico');
+    const img = nativeImage.createFromPath(icoPath);
+    if (!img.isEmpty()) return img;
+  } catch (err) {
+    log.warn('tray.ico load failed, falling back to empty', err);
+  }
   return nativeImage.createEmpty();
 }
 
@@ -93,7 +101,7 @@ export async function createTray(getWindow: GetWindow): Promise<Tray | null> {
   void getWindow;
   if (tray) return tray;
   try {
-    tray = new Tray(placeholderIcon());
+    tray = new Tray(loadTrayIcon());
   } catch (err) {
     log.warn('Tray create failed, continue without tray', err);
     tray = null;
