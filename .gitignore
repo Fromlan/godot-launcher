@@ -22,3 +22,6 @@ playwright-report/
 
 # Node
 *.tsbuildinfo
+
+# 本地开发 / 调研产物(不进版本控制)
+_research/

@@ -60,6 +60,7 @@
 | Main | Node.js 20 + TypeScript |
 | Renderer | React 18 + Vite 5 + Zustand |
 | Styles | Vanilla CSS + CSS Variables (Godot theme) |
+| Icons | addons/at-icons (open-source Godot editor icon set) + inline SVG `fill=currentColor` |
 | Storage | JSON (`%APPDATA%/godot-launcher/`) |
 | HTTP | undici |
 | Compression | yauzl |
@@ -191,7 +192,8 @@ Godot-Launcher/
    +- preload/                   contextBridge exposes window.api
    +- renderer/                  React UI
    |  +- pages/                  Versions / Projects / Plugins / Settings
-   |  +- components/             Sidebar / Modal / ToastHost
+   |  +- components/             Sidebar / Modal / ToastHost / Icon
+|  +- assets/icons/            inline SVG icons (addons/at-icons subset)
    |  +- hooks/                  useApi / useApiEvent
    |  +- stores/                 Zustand (toast)
    |  +- styles/                 theme.css / globals.css
@@ -214,7 +216,16 @@ Godot-Launcher/
 - vitest coverage thresholds + jsdom + ErrorBoundary unit tests
 - App logo + icon: logo.png selected; generated resources/icon.ico (16/32/48/64/128/256 multi-resolution) and resources/tray.ico (16/32); removed .icon-candidates/ directory
 
-### v0.3 (planned)
+### v0.3 done
+
+- **Icon system refactor**: introduced `Icon` component + inline `assets/icons/` (19 at-icons hand-picked SVGs), unified `fill=currentColor`, color follows parent color
+  - Sidebar nav (atom / folder / cog / wrench) + Toast (check / cross / lightning / info-circle) + buttons (refresh / download / play / trash / pencil / link) + rating (star) + theme (palette) + empty states (search-empty)
+  - Replaced original Unicode characters (◈ ▣ ◉ ⚙ etc.) with SVG; consistent, accessible, vector-scalable
+- **UI style polish**: cards now use flex column layout, height follows content; buttons get `white-space: nowrap` + `min-width` + `flex-shrink: 0` to stop icon/text vertical overflow
+- **dev startup ESM/CJS fix**: `scripts/dev.mjs` now auto-runs `write-pkg-type.mjs` to write `dist-main/package.json` + `dist-preload/package.json` (`type: commonjs`), preventing Electron from treating them as ESM (which produced the cryptic `exports is not defined` error)
+- **Icon rendering fix**: `Icon` component now passes the source SVG's `viewBox` to the React `\<svg\>` element — otherwise path data outside the `width`/`height` box gets clipped by SVG's default `overflow: hidden`. This was the root cause of every icon showing as a truncated blob.
+
+### v0.4 (planned)
 
 - Project list export / import (cross-device sync)
 - NSIS uninstall prompt for userData cleanup (`resources/installer.nsh`)

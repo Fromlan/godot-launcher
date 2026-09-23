@@ -41,6 +41,7 @@
 - **系统集成**:开机自启 → 托盘 → 自动更新(GitHub Releases)
 - **持久化**:用户配置 / 版本清单 / 项目库 / AssetLib 缓存 / 启动日志均存 `%APPDATA%`,**重启不丢**
 - **UI**:Godot 官方暗色风格,主色 `#478CBF`,微动效 + 卡片质感 + Hero 节奏
+- **图标系统**:内嵌 [addons/at-icons](https://godotengine.org/asset-library/asset/2311)(718× 16×16 SVG,fill=currentColor),19 个精选图标 + `<Icon>` 组件,色随主题变化
 - **类型安全**:三层独立 tsconfig,主/预/渲全栈 TypeScript 严格模式
 - **测试**:202 个单测(25 个 spec)+ 15 个新增覆盖 SHA-256 / ErrorBoundary / preload contract 等,Playwright E2E 框架就绪
 
@@ -60,6 +61,7 @@
 | 主进程 | Node.js 20 + TypeScript |
 | 渲染层 | React 18 + Vite 5 + Zustand |
 | 样式 | 原生 CSS + CSS Variables(Godot 主题色) |
+| 图标 | addons/at-icons(开源 Godot 编辑器图标集)+ 内联 SVG `fill=currentColor` |
 | 持久化 | JSON(`%APPDATA%/godot-launcher/`) |
 | HTTP | undici |
 | 压缩 | yauzl |
@@ -191,7 +193,8 @@ Godot-Launcher/
 │  ├─ preload/                   contextBridge 暴露 window.api
 │  ├─ renderer/                  React UI
 │  │  ├─ pages/                  Versions / Projects / Plugins / Settings
-│  │  ├─ components/             Sidebar / Modal / ToastHost
+│  │  ├─ components/             Sidebar / Modal / ToastHost / Icon
+│  │  ├─ assets/icons/            内联 SVG 图标(addons/at-icons 子集)
 │  │  ├─ hooks/                  useApi / useApiEvent
 │  │  ├─ stores/                 Zustand(toast)
 │  │  └─ styles/                 theme.css / globals.css
@@ -214,7 +217,16 @@ Godot-Launcher/
 - vitest coverage thresholds + jsdom + ErrorBoundary 单测
 - 应用 logo + icon: 已选定 logo.png,生成 resources/icon.ico(16/32/48/64/128/256 多分辨率)与 resources/tray.ico(16/32),删除 .icon-candidates/ 备选目录
 
-### v0.3(计划)
+### v0.3 已完成
+
+- **图标系统重构**:引入 `Icon` 组件 + 内嵌 `assets/icons/`(19 个 at-icons 精选 SVG),统一 fill=currentColor,色随父级 color 变化
+  - 侧栏导航(atom / folder / cog / wrench)+ Toast(check / cross / lightning / info-circle)+ 按钮(refresh / download / play / trash / pencil / link)+ 评分(star)+ 主题(palette)+ 空状态(search-empty)
+  - 用 SVG 替换原 Unicode 字符(◈ ▣ ◉ ⚙ 等),视觉一致、可访问、矢量缩放
+- **UI 样式优化**:cards 高度由内容自然决定(`.card` 改 flex 列布局);按钮 `white-space: nowrap` + `min-width` + `flex-shrink: 0` 防文字竖排;按钮内 icon 与 padding 自动 spacing
+- **dev 启动 ESM/CJS 修复**:`scripts/dev.mjs` 启动时自动 `write-pkg-type.mjs` 写 `dist-main/package.json` + `dist-preload/package.json`(`type: commonjs`),避免 Electron 把 CJS 产物当 ESM 加载报 `exports is not defined`
+- **Icon 渲染关键修复**:Icon 组件显式把源 SVG 的 `viewBox` 传给 React `\<svg\>`,否则 path data 超出 width/height 范围会被 SVG 默认 `overflow: hidden` 裁掉(此前所有图标显示不全的根因)
+
+### v0.4(计划)
 
 - 项目列表导出 / 导入(跨设备同步)
 - NSIS 卸载时询问是否清理 userData(`resources/installer.nsh`)
