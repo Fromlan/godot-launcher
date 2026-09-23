@@ -1,6 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC_CHANNELS, type IpcResult } from '../../shared/types/ipc';
-import type { PluginEntry, AssetLibSearchQuery, AssetLibSearchResult, AssetLibItem } from '../../shared/types/plugin';
+import type {
+  PluginEntry,
+  AssetLibSearchQuery,
+  AssetLibSearchResult,
+  AssetLibItem
+} from '../../shared/types/plugin';
 import * as plugins from '../services/pluginManager';
 import * as assetLib from '../services/assetLibClient';
 import * as projects from '../services/projectManager';
@@ -38,12 +43,18 @@ export function bindPluginsIpc(): void {
       toIpc(() => assetLib.search(q))
   );
 
+  /** slug 二元组作为详情入参(取代旧整数 id) */
   ipcMain.handle(
     IPC_CHANNELS.pluginsAssetLibDetail,
-    (_e, args: { id: string }): Promise<IpcResult<AssetLibItem>> =>
-      toIpc(() => assetLib.getAsset(args.id))
+    (_e, args: { publisherSlug: string; assetSlug: string }): Promise<IpcResult<AssetLibItem>> =>
+      toIpc(() => assetLib.getAsset(args.publisherSlug, args.assetSlug))
   );
 
+  /**
+   * 主进程 install 内部:
+   *   1) 再读一次项目,拿到 godotVersion 用于 release 选择
+   *   2) 调 installFromAssetLib(item, {projectGodotVersion}) 由主进程自行拉 release
+   */
   ipcMain.handle(
     IPC_CHANNELS.pluginsInstallFromAssetLib,
     async (
@@ -57,7 +68,8 @@ export function bindPluginsIpc(): void {
         return plugins.installFromAssetLib({
           projectPath: p.path,
           item: args.item,
-          cacheDir: getPluginCacheDir()
+          cacheDir: getPluginCacheDir(),
+          projectGodotVersion: p.godotVersion
         });
       });
     }

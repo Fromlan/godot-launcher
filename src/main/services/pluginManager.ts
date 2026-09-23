@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { unzip } from '../utils/unzip';
 import { fetch } from 'undici';
-import type { PluginEntry, AssetLibItem } from '../../shared/types/plugin';
+import { ERR_NO_COMPATIBLE_RELEASE, type AssetLibItem, type AssetLibRelease, type PluginEntry } from '../../shared/types/plugin';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('plugin-manager');
@@ -204,60 +204,189 @@ export async function installFromAssetLib(args: {
   projectPath: string;
   item: AssetLibItem;
   cacheDir: string;
+  projectGodotVersion?: string;
+  listReleasesFn?: (publisherSlug: string, assetSlug: string, opts: { stableOnly?: boolean; compatibility?: string }) => Promise<AssetLibRelease[]>;
+  downloadFn?: (url: string) => Promise<Response>;
+  maxReleaseRetries?: number;
 }): Promise<PluginEntry> {
-  const { projectPath, item, cacheDir } = args;
-  if (!item.downloadUrl) throw new Error('该资源没有下载链接');
-  const slug = item.title.replace(/[^a-zA-Z0-9_-]+/g, '_').toLowerCase();
+  const {
+    projectPath,
+    item,
+    cacheDir,
+    projectGodotVersion,
+    listReleasesFn,
+    downloadFn,
+    maxReleaseRetries = 1
+  } = args;
+  if (!item.publisherSlug || !item.assetSlug) throw new Error('资源标识不完整');
+  const listReleases = listReleasesFn ?? (await import('./storeAssetClient')).listReleases;
+  const download = downloadFn ?? (async (u) => fetch(u, { headers: { 'User-Agent': 'godot-launcher' } }));
+  const compatibleOnly = projectGodotVersion !== undefined;
+  let releases = await listReleases(item.publisherSlug, item.assetSlug, {});
+  if (projectGodotVersion) releases = releases.filter((r) => {
+    if (!r.minGodotVersion) return false;
+    if (r.minGodotVersion > projectGodotVersion) return false;
+    if (r.maxGodotVersion && projectGodotVersion > r.maxGodotVersion) return false;
+    return true;
+  });
+  let chosen = pickRelease(releases, projectGodotVersion);
+  if (!chosen) {
+    const e = new Error(
+      compatibleOnly
+        ? '该资源没有与当前项目 Godot ' + projectGodotVersion + ' 兼容的可下载版本'
+        : '该资源暂无任何可下载版本'
+    );
+    e.name = ERR_NO_COMPATIBLE_RELEASE;
+    throw e;
+  }
+  const pluginSlug = (item.assetSlug || item.name)
+    .replace(/[^a-zA-Z0-9_.-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase() || 'plugin';
   await fs.mkdir(cacheDir, { recursive: true });
-  const cacheFile = path.join(cacheDir, `${item.id}_${item.version}.zip`);
-  const tmpCacheFile = cacheFile + '.part';
+  // cacheFile 名必须安全:assetSlug 可能含 /: 等 Windows 非法字符,所以分别 sanitize 后拼回。
 
-  // 流式写入 + try/finally 清理
+  const safeId = String(chosen.id);
+
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '');
+
+  const cacheBase = sanitize(item.publisherSlug) + '__' + sanitize(item.assetSlug) + '__' + safeId + '.zip';
+
+  const cacheFile = path.join(cacheDir, cacheBase);
+  const tmpCacheFile = cacheFile + '.part';
   try {
     if (!(await readIfExists(cacheFile))) {
-      log.info('downloading asset', item.id, item.downloadUrl);
-      // 下载前清理残留 .part
-      try { await fs.unlink(tmpCacheFile); } catch { /* ignore */ }
-      const res = await fetch(item.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
-      if (!res.ok || !res.body) throw new Error(`asset download failed ${res.status}`);
-      const fileHandle = await fs.open(tmpCacheFile, 'w');
-      try {
-        for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
-          await fileHandle.write(chunk);
+      for (let attempt = 0; attempt <= maxReleaseRetries; attempt++) {
+        try { await fs.unlink(tmpCacheFile); } catch { /* ignore */ }
+        log.info('downloading asset', item.publisherSlug + '/' + item.assetSlug, chosen.downloadUrl);
+        const res = await download(chosen.downloadUrl);
+        if (!res.ok || !res.body) {
+          const retryable = res.status === 403 || res.status === 404;
+          if (!retryable || attempt >= maxReleaseRetries) {
+            throw new Error('asset download failed ' + res.status);
+          }
+          log.warn('presign URL expired, refetching release', res.status, attempt + 1);
+          const next = await listReleases(item.publisherSlug, item.assetSlug, {});
+          const filtered = projectGodotVersion
+            ? next.filter((r) => r.minGodotVersion && r.minGodotVersion <= projectGodotVersion && (!r.maxGodotVersion || projectGodotVersion <= r.maxGodotVersion))
+            : next;
+          const nextChosen = pickRelease(filtered, projectGodotVersion);
+          if (!nextChosen) throw new Error('asset download failed ' + res.status);
+          chosen = nextChosen;
+          continue;
         }
-      } finally {
-        await fileHandle.close();
+        const fileHandle = await fs.open(tmpCacheFile, 'w');
+        try {
+          for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
+            await fileHandle.write(chunk);
+          }
+        } finally {
+          await fileHandle.close();
+        }
+        await fs.rename(tmpCacheFile, cacheFile);
+        break;
       }
-      // 下载成功后原子 rename
-      await fs.rename(tmpCacheFile, cacheFile);
     }
-
-    const targetDir = path.join(projectPath, 'addons', slug);
+    const targetDir = path.join(projectPath, 'addons', pluginSlug);
     await fs.mkdir(targetDir, { recursive: true });
     await unzip(cacheFile, targetDir, { stripTopLevel: true });
-
-    // 解析并启用(用单插件扫描,不扫整个 addons/)
-    const installed = await readSinglePlugin(projectPath, slug);
+    // 兜底:很多 Godot 风格 zip 顶层是 'addons/<dir>/plugin.cfg',stripTopLevel 后
+    // 会变成 'addons/<pluginSlug>/<dir>/plugin.cfg'(嵌套),readSinglePlugin 找不到。
+    // 这里把含 plugin.cfg 的子目录内容搬到 targetDir 顶层。
+    await flattenToPluginDir(targetDir);
+    const installed = await readSinglePlugin(projectPath, pluginSlug);
     if (installed && !installed.enabled) {
       await togglePlugin(projectPath, installed.name);
     }
     if (installed) {
-      // 重新读取以拿到最新 enabled 状态
-      const refreshed = await readSinglePlugin(projectPath, slug);
+      const refreshed = await readSinglePlugin(projectPath, pluginSlug);
       return refreshed || installed;
     }
     return {
-      name: slug,
+      name: pluginSlug,
       path: targetDir,
-      displayName: item.title,
+      displayName: item.name,
       description: item.description,
-      author: item.author,
-      version: item.version,
+      author: item.publisherName,
+      version: chosen.version,
       enabled: true
     };
   } catch (err) {
-    // 任何失败清理 .part
     try { await fs.unlink(tmpCacheFile); } catch { /* ignore */ }
     throw err;
   }
+}
+
+function pickRelease(releases: AssetLibRelease[], projectGodotVersion?: string): AssetLibRelease | null {
+  if (releases.length === 0) return null;
+  const proj = projectGodotVersion?.trim() || undefined;
+  const compat = (r: AssetLibRelease): boolean => {
+    if (!proj) return true;
+    const min = r.minGodotVersion;
+    const max = r.maxGodotVersion;
+    if (!min) return false;
+    if (min > proj) return false;
+    if (max && proj > max) return false;
+    return true;
+  };
+  const stableCompat = releases.filter((r) => r.stable && compat(r));
+  if (stableCompat.length) {
+    stableCompat.sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+    return stableCompat[0];
+  }
+  const anyCompat = releases.filter(compat);
+  if (anyCompat.length) {
+    anyCompat.sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+    return anyCompat[0];
+  }
+  return null;
+}
+
+
+/**
+ * 兜底 normalize:某些 zip(如 addons/<dir>/plugin.cfg 风格)解压后 plugin.cfg
+ * 不在 targetDir 顶层,而是被嵌套在 targetDir/<sub>/ 下。把含 plugin.cfg 的
+ * 一层子目录内容搬到 targetDir,使 readSinglePlugin 能找到。
+ */
+export async function flattenToPluginDir(targetDir: string): Promise<boolean> {
+  if (await readIfExists(path.join(targetDir, 'plugin.cfg'))) return true;
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await fs.readdir(targetDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const subDir = path.join(targetDir, ent.name);
+    if (await readIfExists(path.join(subDir, 'plugin.cfg'))) {
+      const inner = await fs.readdir(subDir, { withFileTypes: true });
+      for (const it of inner) {
+        const src = path.join(subDir, it.name);
+        const dst = path.join(targetDir, it.name);
+        try {
+          if (it.isDirectory()) {
+            await fs.rm(dst, { recursive: true, force: true });
+          } else {
+            await fs.unlink(dst);
+          }
+        } catch {
+          /* ignore: target may not exist */
+        }
+        try {
+          await fs.rename(src, dst);
+        } catch {
+          if (it.isDirectory()) {
+            await fs.cp(src, dst, { recursive: true });
+          } else {
+            await fs.copyFile(src, dst);
+          }
+          await fs.rm(src, { recursive: true, force: true });
+        }
+      }
+      try { await fs.rmdir(subDir); } catch { /* ignore: subdir may be non-empty after partial moves */ }
+      return true;
+    }
+  }
+  return false;
 }

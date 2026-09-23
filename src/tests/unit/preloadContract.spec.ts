@@ -61,3 +61,44 @@ describe('preload API 契约', () => {
     expect(typeof fake.update).toBe('function');
   });
 });
+describe('GodotLauncherApi.plugins 形状(2026-09 store 切换)', () => {
+  it('detail 入参改为 { publisherSlug, assetSlug }', () => {
+    const fake = {
+      list: async () => ({ ok: true, data: [] }),
+      toggle: async () => ({ ok: true, data: null as any }),
+      search: async () => ({ ok: true, data: null as any }),
+      detail: async (args: { publisherSlug: string; assetSlug: string }) => ({
+        ok: true,
+        data: {
+          publisherSlug: args.publisherSlug,
+          assetSlug: args.assetSlug,
+          name: '',
+          publisherName: '',
+          description: '',
+          type: 0,
+          tags: [],
+          license: { type: '', url: '' },
+          reviewsScore: 0,
+          featured: false,
+          thumbnailUrl: '',
+          storeUrl: '',
+          supportsMono: false,
+          lastUpdated: ''
+        }
+      }),
+      install: async () => ({ ok: true, data: null as any })
+    } satisfies GodotLauncherApi['plugins'];
+    expect(typeof fake.detail).toBe('function');
+  });
+
+  it('install 入参仍带 item 但 item 不再需要 downloadUrl', () => {
+    const fake = {
+      list: async () => ({ ok: true, data: [] }),
+      toggle: async () => ({ ok: true, data: null as any }),
+      search: async () => ({ ok: true, data: null as any }),
+      detail: async () => ({ ok: true, data: null as any }),
+      install: async () => ({ ok: true, data: null as any })
+    } satisfies GodotLauncherApi['plugins'];
+    expect(typeof fake.install).toBe('function');
+  });
+});
