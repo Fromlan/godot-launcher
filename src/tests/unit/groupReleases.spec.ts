@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupReleases, isStableGroup, type VersionGroup } from '../../renderer/pages/Versions';
+import { groupReleases, isStableGroup, type VersionGroup } from '../../shared/utils/groupReleases';
 import type { ReleaseInfo } from '../../shared/types/godot';
 
 function rel(tag: string, channel: 'stable' | 'mono', prerelease = false): ReleaseInfo {

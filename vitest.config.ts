@@ -4,11 +4,18 @@ import path from 'node:path';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/tests/unit/**/*.spec.ts'],
+    include: ['src/tests/unit/**/*.spec.{ts,tsx}'],
+    setupFiles: ['./src/tests/setup.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/main/services/**/*.ts', 'src/main/utils/**/*.ts'],
-      reporter: ['text', 'json-summary']
+      include: ['src/main/services/**/*.ts', 'src/main/utils/**/*.ts', 'src/shared/utils/**/*.ts'],
+      reporter: ['text', 'json-summary', 'html'],
+      thresholds: {
+        lines: 70,
+        functions: 70,
+        branches: 60,
+        statements: 70
+      }
     }
   },
   resolve: {

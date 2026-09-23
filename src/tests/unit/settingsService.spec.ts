@@ -7,7 +7,9 @@ import { promises as fs } from 'node:fs';
 vi.mock('electron', () => ({
   app: {
     setLoginItemSettings: vi.fn(),
-    getLoginItemSettings: () => ({ openAtLogin: false })
+    getLoginItemSettings: () => ({ openAtLogin: false }),
+    // 模拟打包后,setAutoLaunch 才会真正写入注册表
+    isPackaged: true
   }
 }));
 
