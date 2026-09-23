@@ -12,6 +12,9 @@ export default function Projects() {
   const [addOpen, setAddOpen] = useState(false);
   const [pathInput, setPathInput] = useState('');
   const [adding, setAdding] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<ProjectEntry | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [renaming, setRenaming] = useState(false);
 
   const versionMap: Record<string, GodotVersion> = {};
   (versions.data || []).forEach((v) => (versionMap[v.id] = v));
@@ -58,6 +61,39 @@ export default function Projects() {
     }
   };
 
+  const openRename = (p: ProjectEntry) => {
+    setRenameTarget(p);
+    setRenameName(p.name);
+  };
+
+  const closeRename = () => {
+    setRenameTarget(null);
+    setRenameName('');
+  };
+
+  const confirmRename = async () => {
+    if (!renameTarget) return;
+    const newName = renameName.trim();
+    if (!newName) {
+      toast.warning('名称不能为空');
+      return;
+    }
+    if (newName === renameTarget.name) {
+      closeRename();
+      return;
+    }
+    setRenaming(true);
+    const res = await window.api.projects.update({ id: renameTarget.id, patch: { name: newName } });
+    setRenaming(false);
+    if (res.ok) {
+      toast.success('已重命名为 ' + res.data.name);
+      projects.refresh();
+      closeRename();
+    } else {
+      toast.error('重命名失败: ' + res.error.detail);
+    }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -98,6 +134,7 @@ export default function Projects() {
               <div className="card-actions">
                 <button className="btn btn-primary" onClick={() => launch(p.id)}>运行</button>
                 <button className="btn" onClick={() => reveal(p.id)}>打开目录</button>
+                <button className="btn" onClick={() => openRename(p)}>重命名</button>
                 <button className="btn btn-danger" onClick={() => remove(p.id)}>移除</button>
               </div>
               {!settings.data?.defaultVersionId && (
@@ -126,6 +163,30 @@ export default function Projects() {
             onChange={(e) => setPathInput(e.target.value)}
           />
           <div className="form-hint">支持相对路径与 Windows 长路径</div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!renameTarget}
+        title="重命名项目"
+        onClose={closeRename}
+        onConfirm={confirmRename}
+        confirmLabel={renaming ? '保存中...' : '保存'}
+      >
+        <div className="form-row">
+          <label className="form-label">项目显示名</label>
+          <input
+            className="input"
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !renaming) {
+                e.preventDefault();
+                void confirmRename();
+              }
+            }}
+          />
+          <div className="form-hint">仅修改显示名,不影响磁盘路径与 project.godot</div>
         </div>
       </Modal>
     </div>

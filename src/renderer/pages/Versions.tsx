@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { GodotVersion, ReleaseInfo, DownloadProgress } from '../../shared/types/godot';
-import { useApiQuery, useApiEvent } from '../hooks/useApi';
+import { useApiQuery } from '../hooks/useApi';
+import { groupReleases, isStableGroup } from '../../shared/utils/groupReleases';
 import { toast } from '../stores/toastStore';
 import Modal from '../components/Modal';
 
@@ -16,38 +17,6 @@ function formatSize(bytes: number): string {
   return `${v.toFixed(1)} ${units[u]}`;
 }
 
-/** 按 tag 把 stable / mono 聚合到同一卡片 */
-export interface VersionGroup {
-  tag: string;
-  label: string;
-  /** 任一通道为 prerelease(dev/rc/beta/alpha)即视为 true */
-  prerelease: boolean;
-  publishedAt: string;
-  stable?: ReleaseInfo;
-  mono?: ReleaseInfo;
-}
-
-export function groupReleases(list: ReleaseInfo[]): VersionGroup[] {
-  const map = new Map<string, VersionGroup>();
-  for (const r of list) {
-    let g = map.get(r.tag);
-    if (!g) {
-      g = { tag: r.tag, label: r.label, prerelease: false, publishedAt: r.publishedAt };
-      map.set(r.tag, g);
-    }
-    // 任一通道为 prerelease,整组视为 dev/prerelease
-    g.prerelease = g.prerelease || r.prerelease;
-    if (r.channel === 'stable') g.stable = r;
-    else if (r.channel === 'mono') g.mono = r;
-  }
-  return Array.from(map.values());
-}
-
-/** 判断 group 是否属于稳定版类型(prerelease=false 即视为 stable) */
-export function isStableGroup(g: VersionGroup): boolean {
-  return !g.prerelease;
-}
-
 export default function Versions() {
   const installed = useApiQuery<GodotVersion[]>(() => window.api.versions.list(), []);
   const releasesQ = useApiQuery<{ releases: ReleaseInfo[]; cachedAt: string | null; stale: boolean }>(
@@ -61,15 +30,36 @@ export default function Versions() {
   const [showStable, setShowStable] = useState(true);
   const [showDev, setShowDev] = useState(false);
 
-  useApiEvent<DownloadProgress>('versions:download-progress', (p) => {
-    setDownloads((cur) => ({ ...cur, [`${p.tag}-${p.channel}`]: p }));
-    if (p.phase === 'done') {
-      toast.success(`下载完成: ${p.tag} (${p.channel})`);
-      installed.refresh();
-    } else if (p.phase === 'error') {
-      toast.error(`下载失败: ${p.message || '未知错误'}`);
-    }
-  });
+  /**
+   * 通过 preload 暴露的类型安全 onDownloadProgress 订阅。
+   * - phase === 'done' → 清理 progress state,触发 installed.refresh()
+   * - phase === 'error' → 清理 progress state(之前只清理 done,导致错误后按钮一直 disabled)
+   * - phase === 'downloading' / 'extracting' → 更新 progress state
+   */
+  useEffect(() => {
+    const off = window.api.versions.onDownloadProgress((p) => {
+      const key = `${p.tag}-${p.channel}`;
+      if (p.phase === 'done') {
+        toast.success(`下载完成: ${p.tag} (${p.channel})`);
+        setDownloads((cur) => {
+          const next = { ...cur };
+          delete next[key];
+          return next;
+        });
+        void installed.refresh();
+      } else if (p.phase === 'error') {
+        toast.error(`下载失败: ${p.message || '未知错误'}`);
+        setDownloads((cur) => {
+          const next = { ...cur };
+          delete next[key];
+          return next;
+        });
+      } else {
+        setDownloads((cur) => ({ ...cur, [key]: p }));
+      }
+    });
+    return off;
+  }, [installed]);
 
   const settings = useApiQuery(() => window.api.system.getSettings(), []);
 
@@ -140,41 +130,41 @@ export default function Versions() {
         const stable = isStableGroup(g);
         if (stable && !showStable) return false;
         if (!stable && !showDev) return false;
-        return true;
+        if (!filter.trim()) return true;
+        const q = filter.toLowerCase();
+        return g.tag.toLowerCase().includes(q) || g.label.toLowerCase().includes(q);
       })
-      .filter((g) => {
-        if (!filter) return true;
-        const kw = filter.toLowerCase();
-        return g.tag.toLowerCase().includes(kw) || g.label.toLowerCase().includes(kw);
-      })
-      .slice(0, 50);
-  }, [releasesQ.data, filter, showDev, showStable]);
+      .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  }, [releasesQ.data, filter, showStable, showDev]);
 
-  const installedIds = new Set((installed.data || []).map((v) => `${v.tag}-${v.channel}`));
+  const installedIds = useMemo(
+    () => new Set((installed.data || []).map((v) => v.id)),
+    [installed.data]
+  );
 
   return (
     <div>
       <div className="page-header">
         <div>
           <div className="page-eyebrow">Engine</div>
-          <div className="page-title">Godot 版本管理</div>
-          <div className="page-subtitle">下载并管理多个 Godot 编辑器版本</div>
+          <div className="page-title">版本管理</div>
+          <div className="page-subtitle">下载、解压、注册本地 Godot 版本</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={importExisting}>导入已有</button>
-          <button className="btn" onClick={() => releasesQ.refresh()}>刷新列表</button>
+          <button className="btn" onClick={() => releasesQ.releases()}>刷新版本列表</button>
+          <button className="btn" onClick={importExisting}>导入本地编辑器</button>
         </div>
       </div>
 
-      <section style={{ marginBottom: 24 }}>
-        <h3 style={{ fontSize: 14, color: 'var(--gd-text-dim)', margin: '0 0 12px' }}>已安装 ({installed.data?.length || 0})</h3>
+      <section style={{ marginBottom: 32 }}>
+        <h3 style={{ fontSize: 14, color: 'var(--gd-text-dim)', margin: '0 0 12px' }}>已安装</h3>
         {installed.loading ? (
           <div className="empty"><div className="spinner" /></div>
         ) : (installed.data?.length ?? 0) === 0 ? (
           <div className="empty">
             <div className="empty-art"><span>◇</span></div>
             <div className="empty-title">尚未安装任何 Godot 版本</div>
-            <div>请在下方列表中选择一个版本下载</div>
+            <div>从下方选择一个版本下载,或点击右上角"导入本地编辑器"</div>
           </div>
         ) : (
           <div className="card-grid">
@@ -182,17 +172,22 @@ export default function Versions() {
               <div className="card" key={v.id}>
                 <div className="card-title">
                   <span>{v.label}</span>
-                  <span className={`tag ${v.channel === 'mono' ? 'tag-primary' : 'tag-success'}`}>{v.channel}</span>
-                  {settings.data?.defaultVersionId === v.id && <span className="tag tag-primary">默认</span>}
+                  {v.channel === 'mono' ? (
+                    <span className="tag tag-primary">mono</span>
+                  ) : (
+                    <span className="tag tag-success">stable</span>
+                  )}
                 </div>
-                <div className="card-subtitle">{v.installPath}</div>
+                <div className="card-subtitle">{v.id}</div>
                 <div className="card-meta">
                   <span>{formatSize(v.sizeBytes)}</span>
                   <span>{new Date(v.installedAt).toLocaleDateString()}</span>
                 </div>
                 <div className="card-actions">
-                  {settings.data?.defaultVersionId !== v.id && (
-                    <button className="btn" onClick={() => setDefault(v.id)}>设为默认</button>
+                  {settings.data?.defaultVersionId === v.id ? (
+                    <button className="btn" disabled>默认版本</button>
+                  ) : (
+                    <button className="btn btn-primary" onClick={() => setDefault(v.id)}>设为默认</button>
                   )}
                   <button className="btn btn-danger" onClick={() => setConfirmRemove(v)}>删除</button>
                 </div>
@@ -203,7 +198,7 @@ export default function Versions() {
       </section>
 
       <section>
-        <h3 style={{ fontSize: 14, color: 'var(--gd-text-dim)', margin: '0 0 12px' }}>可用版本</h3>
+        <h3 style={{ fontSize: 14, color: 'var(--gd-text-dim)', margin: '0 0 12px' }}>可下载</h3>
         <div className="toolbar">
           <input
             className="input"
@@ -294,6 +289,11 @@ export default function Versions() {
         confirmLabel="删除"
       >
         <p>确认删除 <strong>{confirmRemove?.label}</strong> 吗?该操作不可撤销。</p>
+        {confirmRemove && (
+          <p style={{ fontSize: 12, color: 'var(--gd-text-dim)' }}>
+            占用空间: {formatSize(confirmRemove.sizeBytes)} · 安装于 {new Date(confirmRemove.installedAt).toLocaleString()}
+          </p>
+        )}
       </Modal>
     </div>
   );
