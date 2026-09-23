@@ -200,6 +200,18 @@ async function main() {
     die(err.message);
   }
 
+  // 3.5 写 dist-main / dist-preload 的 package.json (type=commonjs)
+  // build 脚本会做这件事,但 dev 仅跑 tsc --watch,产物缺 package.json 时
+  // Electron 主进程会把 CJS 产物当 ESM 加载,报 "exports is not defined"
+  info('writing dist-main/dist-preload package.json (type=commonjs)');
+  try {
+    const { execSync } = await import('node:child_process');
+    execSync('node scripts/write-pkg-type.mjs dist-main commonjs', { cwd: root, stdio: 'ignore' });
+    execSync('node scripts/write-pkg-type.mjs dist-preload commonjs', { cwd: root, stdio: 'ignore' });
+  } catch (err) {
+    warn('write-pkg-type failed (continuing anyway): ' + (err && err.message || err));
+  }
+
   // 4. 启动 electron(可选用 inspect)
   info('starting electron' + (WANT_INSPECT ? ' with --inspect-brk=9229' : ''));
   const electronArgs = ['electron', '.'];
