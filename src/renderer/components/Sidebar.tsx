@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
+import logoUrl from '../assets/logo.png';
 
 const navItems = [
   { to: '/versions', label: '版本管理', icon: '\u25C8' },
@@ -13,7 +14,7 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-header">
         <div className="sidebar-brand">
-          <div className="sidebar-mark">G</div>
+          <img className="sidebar-mark" src={logoUrl} alt="Godot Launcher logo" />
           <div>
             <div className="sidebar-title">Godot Launcher</div>
             <div className="sidebar-subtitle">v0.1.0</div>

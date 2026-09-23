@@ -27,6 +27,7 @@ export function createMainWindow(): BrowserWindow {
     backgroundColor: '#1E1E1E',
     autoHideMenuBar: true,
     title: 'Godot Launcher',
+    icon: path.join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       // 当前文件位于 dist-main/main/window.js;preload 在 ../../dist-preload/preload/index.js;renderer 在 ../../dist-renderer/index.html
       preload: path.join(__dirname, '../../dist-preload/preload/index.js'),

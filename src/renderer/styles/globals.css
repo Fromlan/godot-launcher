@@ -153,23 +153,12 @@ a:hover {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--gd-primary) 0%, var(--gd-accent) 100%);
-  display: grid;
-  place-items: center;
-  font-weight: var(--fw-black);
-  font-size: var(--fs-md);
-  color: #fff;
-  letter-spacing: var(--ls-tighter);
+  display: block;
+  object-fit: cover;
   box-shadow: var(--shadow-glow);
   position: relative;
-}
-.sidebar-mark::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%);
-  pointer-events: none;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
 }
 .sidebar-title {
   font-family: var(--font-display);
