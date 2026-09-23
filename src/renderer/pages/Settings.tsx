@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { AppConfig } from '../../shared/types/settings';
 import type { LogFileInfo } from '../../shared/types/ipc';
 import { useApiQuery } from '../hooks/useApi';
+import { sortInstalled } from '../../shared/utils/groupReleases';
 import { toast } from '../stores/toastStore';
 
 function formatBytes(bytes: number): string {
@@ -86,7 +87,7 @@ export default function Settings() {
               onChange={(e) => update({ defaultVersionId: e.target.value || undefined })}
             >
               <option value="">(不指定)</option>
-              {(versionsQ.data || []).map((v) => (
+              {(sortInstalled(versionsQ.data || [])).map((v) => (
                 <option key={v.id} value={v.id}>{v.label} ({v.channel})</option>
               ))}
             </select>
