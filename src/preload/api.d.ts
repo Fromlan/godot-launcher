@@ -59,7 +59,7 @@ export interface GodotLauncherApi {
     list(args: { projectId: string }): Promise<IpcResult<PluginEntry[]>>;
     toggle(args: { projectId: string; pluginName: string }): Promise<IpcResult<PluginEntry>>;
     search(q: AssetLibSearchQuery): Promise<IpcResult<AssetLibSearchResult>>;
-    detail(args: { id: string }): Promise<IpcResult<AssetLibItem>>;
+    detail(args: { publisherSlug: string; assetSlug: string }): Promise<IpcResult<AssetLibItem>>;
     install(args: { projectId: string; item: AssetLibItem }): Promise<IpcResult<PluginEntry>>;
   };
 

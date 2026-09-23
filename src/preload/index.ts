@@ -52,7 +52,8 @@ const api = {
     list: (args: { projectId: string }) => call('plugins:list', args),
     toggle: (args: { projectId: string; pluginName: string }) => call('plugins:toggle', args),
     search: (q: import('../shared/types/plugin').AssetLibSearchQuery) => call('plugins:assetlib-search', q),
-    detail: (args: { id: string }) => call('plugins:assetlib-detail', args),
+    detail: (args: { publisherSlug: string; assetSlug: string }) =>
+      call('plugins:assetlib-detail', args),
     install: (args: { projectId: string; item: import('../shared/types/plugin').AssetLibItem }) =>
       call('plugins:install-from-assetlib', args)
   },
