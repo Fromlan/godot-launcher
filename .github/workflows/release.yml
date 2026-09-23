@@ -1,0 +1,54 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Verify GH_TOKEN secret
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
+            echo "::error::GH_TOKEN secret is required for release. Configure it in repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "GH_TOKEN secret detected"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build packages
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: npm run package
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            out/*.exe
+            out/latest*.yml
+            out/latest*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
