@@ -16,7 +16,8 @@ interface AssetLibRawItem {
   author_id: number;
   category: string;
   category_id: number;
-  description: string;
+  /** 列表接口不返回此字段,详情接口才有 */
+  description?: string;
   download_url?: string;
   version: string;
   version_string: string;
@@ -30,7 +31,6 @@ interface AssetLibRawItem {
     godot_version: string;
   }>;
 }
-
 interface AssetLibRawResponse {
   result?: AssetLibRawItem[];
   page?: number;
@@ -52,8 +52,7 @@ function toAssetLibItem(raw: AssetLibRawItem): AssetLibItem {
     id: String(raw.id),
     title: raw.title,
     author: raw.author,
-    description: raw.description,
-    godotVersions: godotVersions.length ? godotVersions : raw.godot_version ? [raw.godot_version] : [],
+    description: raw.description || '',    godotVersions: godotVersions.length ? godotVersions : raw.godot_version ? [raw.godot_version] : [],
     supportsMono: godotVersions.some((v) => /mono|c#/i.test(v)) || false,
     category: raw.category,
     downloadUrl,
@@ -109,3 +108,4 @@ export async function getAsset(id: string): Promise<AssetLibItem> {
   const raw = (await res.json()) as AssetLibRawItem;
   return toAssetLibItem(raw);
 }
+

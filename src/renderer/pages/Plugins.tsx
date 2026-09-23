@@ -155,7 +155,7 @@ function ProjectPluginView({ projectId }: { projectId: string }) {
                     Godot: {it.godotVersions.join(', ') || '未标注'}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--gd-text-dim)', marginBottom: 8, maxHeight: 40, overflow: 'hidden' }}>
-                    {it.description.slice(0, 120)}
+                    {(it.description ?? '').slice(0, 120)}
                   </div>
                   <button
                     className="btn btn-primary"
@@ -178,3 +178,4 @@ function ProjectPluginView({ projectId }: { projectId: string }) {
     </div>
   );
 }
+
