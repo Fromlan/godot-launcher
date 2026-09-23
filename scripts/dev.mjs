@@ -94,6 +94,40 @@ function waitForVite(url, timeoutMs = 30000) {
   });
 }
 
+/**
+ * 启动前检测目标端口是否被占;若被占,通过 killport.ps1 杀掉占用进程。
+ * 解决 "Port 5173 is already in use" 问题(常见于上次 dev Ctrl+C 没正常退)。
+ * 仅在 Windows 上有效。
+ */
+async function precheckPortAndCleanup(port) {
+  if (!isWindows) return;
+  if (await isPortFree(port)) return;
+  warn('port ' + port + ' is already in use, killing stale processes ...');
+  try {
+    const { execSync } = await import('node:child_process');
+    const psScript = path.join(__dirname, 'killport.ps1');
+    execSync('powershell -NoProfile -ExecutionPolicy Bypass -File ' + JSON.stringify(psScript) + ' ' + String(port), { stdio: "ignore" });
+    info('killed stale processes');
+  } catch (err) {
+    warn('killport.ps1 failed: ' + (err && err.message || err));
+  }
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await isPortFree(port)) return;
+  }
+  warn('port ' + port + ' still busy; continuing anyway');
+}
+
+async function isPortFree(port) {
+  const net = await import('node:net');
+  return await new Promise((resolve) => {
+    const sock = net.createServer();
+    sock.unref();
+    sock.once('error', () => resolve(false));
+    sock.once('listening', () => sock.close(() => resolve(true)));
+    sock.listen(port, '127.0.0.1');
+  });
+}
 // 1. 清理 dist 产物
 async function cleanDist() {
   for (const d of ['dist-main', 'dist-preload', 'dist-renderer']) {
@@ -136,6 +170,7 @@ async function resetUserData() {
 async function main() {
   info('cwd=' + root);
   if (WANT_CLEAN) await cleanDist();
+  await precheckPortAndCleanup(VITE_PORT);
   if (WANT_RESET) await resetUserData();
 
   info('flags: ' + (WANT_RESET ? '[reset] ' : '') + (WANT_CLEAN ? '[clean] ' : '') + (WANT_DEBUG ? '[debug] ' : '') + (WANT_INSPECT ? '[inspect] ' : '') + '[port=' + VITE_PORT + ']');
