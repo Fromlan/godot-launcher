@@ -4,6 +4,7 @@ import { useApiQuery } from '../hooks/useApi';
 import { groupReleases, isStableGroup } from '../../shared/utils/groupReleases';
 import { toast } from '../stores/toastStore';
 import Modal from '../components/Modal';
+import Icon from '../components/Icon';
 
 function formatSize(bytes: number): string {
   if (!bytes) return '未知';
@@ -151,8 +152,8 @@ export default function Versions() {
           <div className="page-subtitle">下载、解压、注册本地 Godot 版本</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => releasesQ.releases()}>刷新版本列表</button>
-          <button className="btn" onClick={importExisting}>导入本地编辑器</button>
+          <button className="btn" onClick={() => releasesQ.releases()}><Icon name="refresh" size={14} />刷新版本列表</button>
+          <button className="btn" onClick={importExisting}><Icon name="folder-open" size={14} />导入本地编辑器</button>
         </div>
       </div>
 
@@ -162,7 +163,7 @@ export default function Versions() {
           <div className="empty"><div className="spinner" /></div>
         ) : (installed.data?.length ?? 0) === 0 ? (
           <div className="empty">
-            <div className="empty-art"><span>◇</span></div>
+            <div className="empty-art"><Icon name="atom" /></div>
             <div className="empty-title">尚未安装任何 Godot 版本</div>
             <div>从下方选择一个版本下载,或点击右上角"导入本地编辑器"</div>
           </div>
@@ -185,11 +186,11 @@ export default function Versions() {
                 </div>
                 <div className="card-actions">
                   {settings.data?.defaultVersionId === v.id ? (
-                    <button className="btn" disabled>默认版本</button>
+                    <button className="btn" disabled><Icon name="star" size={14} className="icon-warning" />默认版本</button>
                   ) : (
-                    <button className="btn btn-primary" onClick={() => setDefault(v.id)}>设为默认</button>
+                    <button className="btn btn-primary" onClick={() => setDefault(v.id)}><Icon name="star" size={14} />设为默认</button>
                   )}
-                  <button className="btn btn-danger" onClick={() => setConfirmRemove(v)}>删除</button>
+                  <button className="btn btn-danger" onClick={() => setConfirmRemove(v)}><Icon name="trash" size={14} />删除</button>
                 </div>
               </div>
             ))}
@@ -219,7 +220,7 @@ export default function Versions() {
           <div className="empty"><div className="spinner" /></div>
         ) : groupedReleases.length === 0 ? (
           <div className="empty">
-            <div className="empty-art"><span>◎</span></div>
+            <div className="empty-art"><Icon name="search-empty" /></div>
             <div className="empty-title">没有匹配的版本</div>
             <div>尝试调整勾选或清空搜索条件</div>
           </div>
@@ -260,7 +261,7 @@ export default function Versions() {
                         disabled={!!stableProgress && stableProgress.phase !== 'done' && stableProgress.phase !== 'error'}
                         title={stableInstalled ? '重新下载 stable 通道' : '下载 stable 通道'}
                       >
-                        {stableInstalled ? '重下 stable' : '下载 stable'}
+                        {stableInstalled ? <><Icon name="refresh" size={14} />重下 stable</> : <><Icon name="download" size={14} />下载 stable</>}
                       </button>
                     )}
                     {g.mono && (
@@ -270,7 +271,7 @@ export default function Versions() {
                         disabled={!!monoProgress && monoProgress.phase !== 'done' && monoProgress.phase !== 'error'}
                         title={monoInstalled ? '重新下载 mono 通道' : '下载 mono 通道'}
                       >
-                        {monoInstalled ? '重下 mono' : '下载 mono'}
+                        {monoInstalled ? <><Icon name="refresh" size={14} />重下 mono</> : <><Icon name="download" size={14} />下载 mono</>}
                       </button>
                     )}
                   </div>

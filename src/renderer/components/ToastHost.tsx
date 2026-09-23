@@ -1,11 +1,12 @@
 import React from 'react';
 import { useToastStore } from '../stores/toastStore';
+import Icon, { type IconName } from './Icon';
 
-function iconFor(kind: string): string {
-  if (kind === "success") return "\u2713";
-  if (kind === "error") return "\u2715";
-  if (kind === "warning") return "!";
-  return "\u2139";
+function iconNameFor(kind: string): IconName {
+  if (kind === 'success') return 'check';
+  if (kind === 'error')   return 'cross';
+  if (kind === 'warning') return 'lightning';
+  return 'info-circle';
 }
 
 function ProgressBar({ remaining, sticky, paused }: { remaining: number; sticky: boolean; paused: boolean }) {
@@ -14,12 +15,15 @@ function ProgressBar({ remaining, sticky, paused }: { remaining: number; sticky:
   const ratio = Math.max(0, Math.min(1, remaining / 4500));
   return (
     <div className="toast-progress" aria-hidden>
-      <div className="toast-progress-fill" style={{ transform: `scaleX(${ratio})`, animationPlayState: paused ? "paused" : "running" }} />
+      <div
+        className="toast-progress-fill"
+        style={{ transform: 'scaleX(' + ratio + ')', animationPlayState: paused ? 'paused' : 'running' }}
+      />
     </div>
   );
 }
 
-export default function ToastHost() {
+export default function ToastHost(): React.ReactElement {
   const toasts = useToastStore((s) => s.toasts);
   const remove = useToastStore((s) => s.remove);
   const pause = useToastStore((s) => s.pause);
@@ -29,21 +33,21 @@ export default function ToastHost() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`toast toast-${t.kind}${t.remaining < 0 ? " toast-sticky" : ""}`}
-          role={t.kind === "error" ? "alert" : "status"}
+          className={'toast toast-' + t.kind + (t.remaining < 0 ? ' toast-sticky' : '')}
+          role={t.kind === 'error' ? 'alert' : 'status'}
           onMouseEnter={() => pause(t.id)}
           onMouseLeave={() => resume(t.id)}
           onFocus={() => pause(t.id)}
           onBlur={() => resume(t.id)}
         >
-          <span className="toast-icon" aria-hidden>{iconFor(t.kind)}</span>
+          <span className="toast-icon" aria-hidden><Icon name={iconNameFor(t.kind)} /></span>
           <span className="toast-message">{t.message}</span>
           <button
             className="toast-close"
             aria-label="关闭通知"
             onClick={() => remove(t.id)}
           >
-            {"\u00d7"}
+            {'×'}
           </button>
           <ProgressBar remaining={t.remaining} sticky={t.remaining < 0} paused={t.paused} />
         </div>

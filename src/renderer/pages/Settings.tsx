@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Icon from '../components/Icon';
 import type { AppConfig } from '../../shared/types/settings';
 import type { LogFileInfo } from '../../shared/types/ipc';
 import { useApiQuery } from '../hooks/useApi';
@@ -146,8 +147,8 @@ export default function Settings() {
             <span style={{ fontFamily: "var(--font-mono)" }}>{appVersion.data?.node || "-"}</span>
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-            <button className="btn" onClick={checkUpdate}>检查更新</button>
-            <button className="btn" onClick={revealLogs}>打开日志目录</button>
+            <button className="btn" onClick={checkUpdate}><Icon name="refresh" size={13} />检查更新</button>
+            <button className="btn" onClick={revealLogs}><Icon name="folder-open" size={13} />打开日志目录</button>
           </div>
         </section>
       </div>
@@ -200,8 +201,8 @@ function LogsSection() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, margin: 0, color: "var(--gd-text-dim)" }}>日志</h3>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn" onClick={refresh} disabled={loading}>{loading ? "刷新中..." : "刷新"}</button>
-          <button className="btn btn-danger" onClick={clearAll} disabled={files.length === 0}>清空</button>
+          <button className="btn" onClick={refresh} disabled={loading}><Icon name="refresh" size={13} />{loading ? "刷新中..." : "刷新"}</button>
+          <button className="btn btn-danger" onClick={clearAll} disabled={files.length === 0}><Icon name="trash" size={13} />清空</button>
         </div>
       </div>
       {files.length === 0 ? (

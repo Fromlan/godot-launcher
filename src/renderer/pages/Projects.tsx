@@ -4,6 +4,7 @@ import type { GodotVersion } from '../../shared/types/godot';
 import { useApiQuery } from '../hooks/useApi';
 import { toast } from '../stores/toastStore';
 import Modal from '../components/Modal';
+import Icon from '../components/Icon';
 
 export default function Projects() {
   const projects = useApiQuery<ProjectEntry[]>(() => window.api.projects.list(), []);
@@ -102,14 +103,14 @@ export default function Projects() {
           <div className="page-title">项目管理</div>
           <div className="page-subtitle">登记 Godot 项目并一键启动</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setAddOpen(true)}>+ 添加项目</button>
+        <button className="btn btn-primary" onClick={() => setAddOpen(true)}><Icon name="folder-open" size={13} />添加项目</button>
       </div>
 
       {projects.loading ? (
         <div className="empty"><div className="spinner" /></div>
       ) : (projects.data?.length ?? 0) === 0 ? (
         <div className="empty">
-          <div className="empty-art"><span>▣</span></div>
+          <div className="empty-art"><Icon name="folder" /></div>
           <div className="empty-title">尚未登记任何项目</div>
           <div>点击右上角按钮,填入包含 project.godot 的目录即可</div>
         </div>
@@ -132,10 +133,10 @@ export default function Projects() {
                 <span>启动 {p.launchCount} 次</span>
               </div>
               <div className="card-actions">
-                <button className="btn btn-primary" onClick={() => launch(p.id)}>运行</button>
-                <button className="btn" onClick={() => reveal(p.id)}>打开目录</button>
-                <button className="btn" onClick={() => openRename(p)}>重命名</button>
-                <button className="btn btn-danger" onClick={() => remove(p.id)}>移除</button>
+                <button className="btn btn-primary" onClick={() => launch(p.id)}><Icon name="play" size={12} />运行</button>
+                <button className="btn" onClick={() => reveal(p.id)}><Icon name="folder-open" size={13} />打开目录</button>
+                <button className="btn" onClick={() => openRename(p)}><Icon name="pencil" size={13} />重命名</button>
+                <button className="btn btn-danger" onClick={() => remove(p.id)}><Icon name="trash" size={13} />移除</button>
               </div>
               {!settings.data?.defaultVersionId && (
                 <div style={{ marginTop: 8, fontSize: 11, color: 'var(--gd-warning)' }}>
