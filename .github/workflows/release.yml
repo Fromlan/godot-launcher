@@ -1,19 +1,50 @@
 name: release
 
 on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type (ignored when triggered by tag push)'
+        type: choice
+        required: true
+        default: 'patch'
+        options:
+          - patch
+          - minor
+          - major
+          - prepatch
+          - preminor
+          - premajor
+          - none
+      prerelease:
+        description: 'Mark as prerelease (RC)'
+        type: boolean
+        required: false
+        default: false
+      draft:
+        description: 'Create as draft (not visible publicly)'
+        type: boolean
+        required: false
+        default: false
   push:
     tags:
       - "v*"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  package:
+  release:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -21,34 +52,110 @@ jobs:
           node-version: "20"
           cache: npm
 
-      - name: Verify GH_TOKEN secret
+      - name: Skip if release for this tag already exists
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" --json url --jq .url >/dev/null 2>&1; then
+            echo "::notice::Release $TAG already exists, skipping."
+            exit 0
+          fi
+          echo "Release $TAG does not exist yet, proceeding."
+
+      - name: Verify release token is available
         shell: bash
         run: |
-          if [ -z "${{ secrets.GH_TOKEN }}" ]; then
-            echo "::error::GH_TOKEN secret is required for release. Configure it in repository Settings -> Secrets and variables -> Actions."
+          if [ -z "${{ secrets.GH_TOKEN }}" ] && [ -z "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "::error::GH_TOKEN or GITHUB_TOKEN secret is required for release."
             exit 1
           fi
-          echo "GH_TOKEN secret detected"
+          echo "Release token detected."
 
+      # ---- 仅 workflow_dispatch 路径: bump + commit ----
+      - name: Bump version
+        id: bump
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          BUMP="${{ inputs.bump }}"
+          if [ "$BUMP" = "none" ]; then
+            CUR=$(node -p "require('./package.json').version")
+            echo "version=$CUR" >> "$GITHUB_OUTPUT"
+            echo "Reusing current version $CUR"
+          else
+            NEW=$(npm version "$BUMP" --no-git-tag-version --no-commit | sed 's/^v//')
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            echo "Bumped to $NEW (type: $BUMP)"
+          fi
+
+      - name: Sync package-lock.json
+        if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+        run: npm install --package-lock-only --no-audit
+
+      - name: Generate changelog
+        run: node scripts/release-notes.mjs --write
+
+      - name: Commit bump + changelog
+        if: github.event_name == 'workflow_dispatch' && inputs.bump != 'none'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "chore(release): v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:main
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # ---- 公共路径: build + release ----
       - name: Install dependencies
         run: npm ci
 
       - name: Build packages
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: npm run package
 
-      - name: Upload release artifacts
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          cd out
+          if ls *.exe >/dev/null 2>&1; then
+            sha256sum *.exe > SHA256SUMS.txt
+            cat SHA256SUMS.txt
+          else
+            echo "::error::No .exe artifacts found in out/"
+            exit 1
+          fi
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            V="${{ steps.bump.outputs.version }}"
+          else
+            V="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Release tag resolved: v$V"
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          generate_release_notes: true
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          draft: ${{ inputs.draft == 'true' }}
+          prerelease: ${{ inputs.prerelease == 'true' }}
+          generate_release_notes: false
+          body_path: RELEASE_NOTES.md
           files: |
             out/*.exe
             out/latest*.yml
             out/latest*.blockmap
+            out/SHA256SUMS.txt
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
