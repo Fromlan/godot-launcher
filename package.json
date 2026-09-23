@@ -41,7 +41,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\" .prettierrc.*"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@eslint/js": "^9.39.4",
     "@playwright/test": "^1.48.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
