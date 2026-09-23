@@ -29,6 +29,6 @@ nsis:
   include: resources/installer.nsh
 publish:
   provider: github
-  owner: godot-launcher
+  owner: Fromlan
   repo: godot-launcher
   releaseType: release
