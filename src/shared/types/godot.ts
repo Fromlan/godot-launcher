@@ -18,6 +18,8 @@ export interface GodotVersion {
   sizeBytes: number;
   /** ISO 时间戳 */
   installedAt: string;
+  /** 安装时校验的 SHA-256(十六进制,小写);用于重下/重导入时的完整性检查 */
+  sha256?: string;
 }
 
 /** GitHub Release 远端信息 */
@@ -34,6 +36,8 @@ export interface ReleaseInfo {
   prerelease: boolean;
   /** 发布时间 ISO */
   publishedAt: string;
+  /** GitHub 资产清单中的 .sha256 文件(与 downloadUrl 同形,无则跳过校验) */
+  sha256Url?: string;
 }
 
 /** 下载进度事件 payload */

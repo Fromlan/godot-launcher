@@ -71,6 +71,42 @@ async function readIfExists(p: string): Promise<string | null> {
   }
 }
 
+/**
+ * 单插件扫描:不扫整个 addons/ 目录,直接 stat + readFile 单一 plugin。
+ * 用于 togglePlugin 后无需 listLocalPlugins 全部重建。
+ */
+async function readSinglePlugin(projectPath: string, pluginName: string): Promise<PluginEntry | null> {
+  const dir = path.join(projectPath, 'addons', pluginName);
+  const stat = await fs.stat(dir).catch(() => null);
+  if (!stat || !stat.isDirectory()) return null;
+  const enabledPath = path.join(dir, 'plugin.cfg');
+  const disabledPath = path.join(dir, 'plugin.cfg.disabled');
+  // 优化:先 stat enabled,存在则只读 ENABLED,否则只读 DISABLED
+  const enabledStat = await fs.stat(enabledPath).catch(() => null);
+  const cfgText = enabledStat && enabledStat.isFile()
+    ? await readIfExists(enabledPath)
+    : await readIfExists(disabledPath);
+  if (!cfgText) return null;
+  const enabled = !!(enabledStat && enabledStat.isFile());
+  let meta;
+  try {
+    meta = parsePluginCfg(cfgText);
+  } catch (err) {
+    log.warn('parse plugin.cfg failed', dir, err);
+    return null;
+  }
+  return {
+    name: pluginName,
+    path: dir,
+    displayName: meta.name || pluginName,
+    description: meta.description,
+    author: meta.author,
+    version: meta.version,
+    script: meta.script,
+    enabled
+  };
+}
+
 /** 扫描项目内 addons/ 下的所有插件 */
 export async function listLocalPlugins(projectPath: string): Promise<PluginEntry[]> {
   const addonsDir = path.join(projectPath, 'addons');
@@ -85,13 +121,15 @@ export async function listLocalPlugins(projectPath: string): Promise<PluginEntry
     const dir = path.join(addonsDir, name);
     const stat = await fs.stat(dir).catch(() => null);
     if (!stat || !stat.isDirectory()) continue;
-    // Godot 启用/禁用做法:重命名 plugin.cfg.disabled ↔ plugin.cfg
+    // 优化:先 stat enabled,存在则只读 ENABLED;否则读 DISABLED
     const enabledPath = path.join(dir, 'plugin.cfg');
     const disabledPath = path.join(dir, 'plugin.cfg.disabled');
-    const enabledCfg = await readIfExists(enabledPath);
-    const disabledCfg = await readIfExists(disabledPath);
-    const cfgText = enabledCfg || disabledCfg;
+    const enabledStat = await fs.stat(enabledPath).catch(() => null);
+    const cfgText = enabledStat && enabledStat.isFile()
+      ? await readIfExists(enabledPath)
+      : await readIfExists(disabledPath);
     if (!cfgText) continue;
+    const enabled = !!(enabledStat && enabledStat.isFile());
     let meta;
     try {
       meta = parsePluginCfg(cfgText);
@@ -107,7 +145,7 @@ export async function listLocalPlugins(projectPath: string): Promise<PluginEntry
       author: meta.author,
       version: meta.version,
       script: meta.script,
-      enabled: !!enabledCfg
+      enabled
     });
   }
   return plugins;
@@ -118,6 +156,7 @@ export async function listLocalPlugins(projectPath: string): Promise<PluginEntry
  * - 当前启用 → 重命名 plugin.cfg → plugin.cfg.disabled
  * - 当前禁用 → 重命名 plugin.cfg.disabled → plugin.cfg
  * 同名并发调用由 runPluginOp 串行化,避免读状态 → 改名竞态。
+ * 重命名后用 readSinglePlugin 重建单条 PluginEntry,避免扫整个 addons/。
  */
 export function togglePlugin(projectPath: string, pluginName: string): Promise<PluginEntry> {
   return runPluginOp(projectPath, pluginName, async () => {
@@ -130,7 +169,6 @@ export function togglePlugin(projectPath: string, pluginName: string): Promise<P
         await fs.rename(enabledPath, disabledPath);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-          // 竞态兜底:其它调用已经先重命名了,再读一次决定结果
           const exists = await readIfExists(disabledPath).then(Boolean);
           if (!exists) throw err;
           return pluginsAfter(projectPath, pluginName);
@@ -156,10 +194,9 @@ export function togglePlugin(projectPath: string, pluginName: string): Promise<P
 }
 
 async function pluginsAfter(projectPath: string, pluginName: string): Promise<PluginEntry> {
-  const plugins = await listLocalPlugins(projectPath);
-  const found = plugins.find((p) => p.name === pluginName);
-  if (!found) throw new Error('插件切换后丢失');
-  return found;
+  const plugin = await readSinglePlugin(projectPath, pluginName);
+  if (!plugin) throw new Error('插件切换后丢失');
+  return plugin;
 }
 
 /** 从 AssetLib 下载并安装到项目 */
@@ -173,39 +210,54 @@ export async function installFromAssetLib(args: {
   const slug = item.title.replace(/[^a-zA-Z0-9_-]+/g, '_').toLowerCase();
   await fs.mkdir(cacheDir, { recursive: true });
   const cacheFile = path.join(cacheDir, `${item.id}_${item.version}.zip`);
+  const tmpCacheFile = cacheFile + '.part';
 
-  if (!(await readIfExists(cacheFile))) {
-    log.info('downloading asset', item.id, item.downloadUrl);
-    const res = await fetch(item.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
-    if (!res.ok || !res.body) throw new Error(`asset download failed ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    await fs.writeFile(cacheFile, buf);
+  // 流式写入 + try/finally 清理
+  try {
+    if (!(await readIfExists(cacheFile))) {
+      log.info('downloading asset', item.id, item.downloadUrl);
+      // 下载前清理残留 .part
+      try { await fs.unlink(tmpCacheFile); } catch { /* ignore */ }
+      const res = await fetch(item.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
+      if (!res.ok || !res.body) throw new Error(`asset download failed ${res.status}`);
+      const fileHandle = await fs.open(tmpCacheFile, 'w');
+      try {
+        for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
+          await fileHandle.write(chunk);
+        }
+      } finally {
+        await fileHandle.close();
+      }
+      // 下载成功后原子 rename
+      await fs.rename(tmpCacheFile, cacheFile);
+    }
+
+    const targetDir = path.join(projectPath, 'addons', slug);
+    await fs.mkdir(targetDir, { recursive: true });
+    await unzip(cacheFile, targetDir, { stripTopLevel: true });
+
+    // 解析并启用(用单插件扫描,不扫整个 addons/)
+    const installed = await readSinglePlugin(projectPath, slug);
+    if (installed && !installed.enabled) {
+      await togglePlugin(projectPath, installed.name);
+    }
+    if (installed) {
+      // 重新读取以拿到最新 enabled 状态
+      const refreshed = await readSinglePlugin(projectPath, slug);
+      return refreshed || installed;
+    }
+    return {
+      name: slug,
+      path: targetDir,
+      displayName: item.title,
+      description: item.description,
+      author: item.author,
+      version: item.version,
+      enabled: true
+    };
+  } catch (err) {
+    // 任何失败清理 .part
+    try { await fs.unlink(tmpCacheFile); } catch { /* ignore */ }
+    throw err;
   }
-
-  const targetDir = path.join(projectPath, 'addons', slug);
-  await fs.mkdir(targetDir, { recursive: true });
-  await unzip(cacheFile, targetDir, { stripTopLevel: true });
-
-  // 解析并启用
-  const plugins = await listLocalPlugins(projectPath);
-  const installed = plugins.find((p) => p.path === targetDir);
-  if (installed && !installed.enabled) {
-    await togglePlugin(projectPath, installed.name);
-  }
-  return installed || {
-    name: slug,
-    path: targetDir,
-    displayName: item.title,
-    description: item.description,
-    author: item.author,
-    version: item.version,
-    enabled: true
-  };
 }
-
-
-
-
-
-
-

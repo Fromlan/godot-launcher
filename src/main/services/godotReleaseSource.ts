@@ -6,6 +6,10 @@ import type { ReleaseInfo } from '../../shared/types/godot';
 import type { GodotChannel } from '../../shared/constants/godot';
 import { createLogger } from '../utils/logger';
 import { getReleasesCachePath } from '../utils/path';
+import { sortReleases } from '../../shared/utils/sortReleases';
+
+// 重导出纯函数,保持向后兼容(单测/外部引用)
+export { sortReleases, compareReleases, parseTagKey } from '../../shared/utils/sortReleases';
 
 const log = createLogger('godot-release-source');
 
@@ -37,6 +41,11 @@ function toReleaseInfo(r: GitHubRelease): ReleaseInfo[] {
     const isWin64 = lower.includes('win64') && lower.endsWith('.zip');
     if (!isWin64) continue;
     const channel: GodotChannel = lower.includes('mono') ? 'mono' : 'stable';
+    /**
+     * 若 GitHub Release 同时包含 .zip 与 .zip,提取 .sha256 URL 用于下载完整性校验。
+     * Godot 官方 Release 的资产命名: Godot_v4.x-stable_win64.zip 与 Godot_v4.x-stable_win64.zip.sha256
+     */
+    const sha256Asset = r.assets.find((a) => a.name === asset.name + '.sha256');
     out.push({
       tag: r.tag_name,
       label: r.name || r.tag_name,
@@ -45,66 +54,11 @@ function toReleaseInfo(r: GitHubRelease): ReleaseInfo[] {
       downloadUrl: asset.browser_download_url,
       sizeBytes: asset.size,
       prerelease: r.prerelease,
-      publishedAt: r.published_at
+      publishedAt: r.published_at,
+      sha256Url: sha256Asset?.browser_download_url
     });
   }
   return out;
-}
-
-/**
- * 解析 tag 字符串为可比较的排序键。
- * 支持的形态:
- *   4.6-stable       -> [4, 6, 0, 0, 0]
- *   4.6.2-stable     -> [4, 6, 2, 0, 0]
- *   4.8-dev6         -> [4, 8, 0, 3, 6]
- *   4.8-rc1          -> [4, 8, 0, 1, 1]
- *   4.8-beta2        -> [4, 8, 0, 2, 2]
- *   4.8-alpha1       -> [4, 8, 0, 4, 1]
- * typeRank: stable=0 / rc=1 / beta=2 / dev=3 / alpha=4 / 其他=5
- */
-const SUFFIX_RANK: Record<string, number> = {
-  stable: 0,
-  rc: 1,
-  beta: 2,
-  dev: 3,
-  alpha: 4
-};
-
-function parseTagKey(tag: string): number[] {
-  const m = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(.+))?$/.exec(tag.trim());
-  if (!m) return [0, 0, 0, 99, 0];
-  const major = parseInt(m[1], 10);
-  const minor = parseInt(m[2], 10);
-  const patch = m[3] ? parseInt(m[3], 10) : 0;
-  const suffix = (m[4] || '').toLowerCase();
-  const typeRank = SUFFIX_RANK[suffix] ?? 5;
-  let suffixNum = 0;
-  const numMatch = /(\d+)/.exec(suffix);
-  if (numMatch) suffixNum = parseInt(numMatch[1], 10);
-  return [major, minor, patch, typeRank, suffixNum];
-}
-
-/**
- * 排序规则(降序,数值越大越靠前):
- *   1) 主版本号 major.minor.patch 数字降序
- *   2) 同主版本号时,类型优先级 stable > rc > beta > dev > alpha
- *   3) 同类型时,suffixNum(数字)越大越靠前
- *   4) 同 key:stable 通道优先于 mono
- *   5) 兜底:发布时间晚的优先
- */
-export function compareReleases(a: ReleaseInfo, b: ReleaseInfo): number {
-  const ka = parseTagKey(a.tag);
-  const kb = parseTagKey(b.tag);
-  if (ka[0] !== kb[0]) return kb[0] - ka[0];   // major desc
-  if (ka[1] !== kb[1]) return kb[1] - ka[1];   // minor desc
-  if (ka[2] !== kb[2]) return kb[2] - ka[2];   // patch desc
-  if (ka[3] !== kb[3]) return ka[3] - kb[3];   // type asc(stable 优先)
-  if (ka[4] !== kb[4]) return kb[4] - ka[4];   // suffixNum desc
-  if (a.channel !== b.channel) return a.channel === 'stable' ? -1 : 1;
-  return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-}
-export function sortReleases(list: ReleaseInfo[]): ReleaseInfo[] {
-  return [...list].sort(compareReleases);
 }
 
 async function fetchFromNetwork(): Promise<ReleaseInfo[]> {
@@ -159,6 +113,3 @@ export async function listReleases(opts: { forceRefresh?: boolean } = {}): Promi
     throw err;
   }
 }
-
-
-

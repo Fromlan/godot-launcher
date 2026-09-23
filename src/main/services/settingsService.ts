@@ -32,7 +32,14 @@ export async function setSettings(patch: Partial<AppConfig>): Promise<AppConfig>
   const next = { ...cur, ...patch };
   if (patch.autoLaunch !== undefined && patch.autoLaunch !== cur.autoLaunch) {
     try {
-      setAutoLaunch(next.autoLaunch);
+      // setAutoLaunch 内部自带守卫(仅在 app.isPackaged 时实际写入注册表)
+      // 这里再覆盖一次防御,避免 settingsService 直接被外部模块调用时漏守卫
+      const { app } = await import('electron');
+      if (app.isPackaged) {
+        setAutoLaunch(next.autoLaunch);
+      } else {
+        log.info('setSettings autoLaunch ignored (dev mode)');
+      }
     } catch (err) {
       log.warn('setAutoLaunch failed', err);
     }

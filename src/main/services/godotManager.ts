@@ -1,12 +1,12 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fetch } from 'undici';
 import { unzip } from '../utils/unzip';
 import { readJsonSafe, writeJsonAtomic, injectSchemaVersion } from '../utils/migrate';
 import { SCHEMA_VERSION } from '../../shared/constants/schema';
-import { sortReleases } from './godotReleaseSource';
 import { GODOT_DEFAULT_ARGS, GODOT_EXE_NAMES } from '../../shared/constants/godot';
 import type { GodotVersion, ReleaseInfo, DownloadProgress } from '../../shared/types/godot';
 import type { ProjectEntry, LaunchOptions } from '../../shared/types/project';
@@ -20,6 +20,10 @@ import {
   dirSize
 } from '../utils/path';
 import { createLogger } from '../utils/logger';
+import { sortInstalled as sortInstalledShared } from '../../shared/utils/groupReleases';
+
+// 重导出,避免破坏现有单测/调用方
+export { sortInstalledShared as sortInstalled };
 
 const log = createLogger('godot-manager');
 
@@ -75,7 +79,7 @@ export async function listInstalled(): Promise<GodotVersion[]> {
     }
   }
   if (live.length !== manifest.length) await writeManifest(live);
-  return sortInstalled(live);
+  return sortInstalledShared(live);
 }
 
 interface DownloadArgs {
@@ -83,6 +87,13 @@ interface DownloadArgs {
   channel: 'stable' | 'mono';
   release: ReleaseInfo;
   onProgress?: ProgressCallback;
+}
+
+/** 从 GitHub .sha256 资产文本中提取期望哈希 */
+function parseSha256(text: string): string | null {
+  const first = text.trim().split(/\s+/)[0];
+  if (!first) return null;
+  return /^[a-f0-9]{64}$/i.test(first) ? first.toLowerCase() : null;
 }
 
 /** 下载并安装一个 Godot 版本 */
@@ -119,29 +130,61 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
     });
   };
 
-  // 下载
-  emit({ phase: 'downloading', percent: 0 });
-  const res = await fetch(release.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
-  if (!res.ok || !res.body) throw new Error(`download failed ${res.status}`);
-  const total = Number(res.headers.get('content-length') || release.sizeBytes) || release.sizeBytes;
-  let received = 0;
-  const fileHandle = await fs.open(tmpZip, 'w');
-  try {
-    for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
-      await fileHandle.write(chunk);
-      received += chunk.length;
-      const percent = total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : 0;
-      emit({ phase: 'downloading', receivedBytes: received, totalBytes: total, percent });
+  // 预先拿期望 SHA-256(若 release 提供)
+  let expectedSha256: string | null = null;
+  if (release.sha256Url) {
+    try {
+      const shaRes = await fetch(release.sha256Url, { headers: { 'User-Agent': 'godot-launcher' } });
+      if (shaRes.ok) {
+        expectedSha256 = parseSha256(await shaRes.text());
+        if (!expectedSha256) log.warn('sha256 file parse failed, skip verify', release.sha256Url);
+      }
+    } catch (err) {
+      log.warn('sha256 fetch failed, continue without verify', err);
     }
-  } finally {
-    await fileHandle.close();
   }
 
-  // 解压
-  emit({ phase: 'extracting', percent: 100 });
-  await unzip(tmpZip, installPath, { stripTopLevel: true });
-  // 删除临时 zip
-  try { await fs.unlink(tmpZip); } catch { /* ignore */ }
+  let downloadedSize!: number;
+  let actualSha256!: string | null;
+
+  try {
+    // 下载 + 流式算 SHA-256
+    emit({ phase: 'downloading', percent: 0 });
+    const res = await fetch(release.downloadUrl, { headers: { 'User-Agent': 'godot-launcher' } });
+    if (!res.ok || !res.body) throw new Error(`download failed ${res.status}`);
+    const total = Number(res.headers.get('content-length') || release.sizeBytes) || release.sizeBytes;
+    let received = 0;
+    const fileHandle = await fs.open(tmpZip, 'w');
+    const hasher = expectedSha256 ? crypto.createHash('sha256') : null;
+    try {
+      for await (const chunk of res.body as unknown as AsyncIterable<Buffer>) {
+        await fileHandle.write(chunk);
+        received += chunk.length;
+        if (hasher) hasher.update(chunk);
+        const percent = total > 0 ? Math.min(99, Math.floor((received / total) * 100)) : 0;
+        emit({ phase: 'downloading', receivedBytes: received, totalBytes: total, percent });
+      }
+    } finally {
+      await fileHandle.close();
+    }
+    downloadedSize = received;
+    if (hasher) actualSha256 = hasher.digest('hex');
+
+    // SHA-256 校验
+    if (expectedSha256 && actualSha256 && actualSha256 !== expectedSha256) {
+      throw new Error(
+        `SHA256 mismatch: expected=${expectedSha256} got=${actualSha256} ` +
+        `(url=${release.downloadUrl}, bytes=${downloadedSize})`
+      );
+    }
+
+    // 解压
+    emit({ phase: 'extracting', percent: 100, receivedBytes: downloadedSize, totalBytes: downloadedSize });
+    await unzip(tmpZip, installPath, { stripTopLevel: true });
+  } finally {
+    // 任何失败(包括 SHA-256 mismatch)都清理 .zip.part;成功路径也一并清理
+    try { await fs.unlink(tmpZip); } catch { /* ignore */ }
+  }
 
   // 定位 exe
   const exe = resolveExecutable(installPath, channel);
@@ -157,7 +200,8 @@ export async function downloadAndInstall(args: DownloadArgs): Promise<GodotVersi
     installPath,
     executablePath: exe,
     sizeBytes: await dirSize(installPath),
-    installedAt: new Date().toISOString()
+    installedAt: new Date().toISOString(),
+    sha256: actualSha256 ?? undefined
   };
   const next2 = [...existing, version];
   await writeManifest(next2);
@@ -169,7 +213,7 @@ interface ImportExistingArgs {
   executablePath: string;
 }
 
-/** 从文件名 / 父目录名解析 tag 和 channel */
+/** 从文件夹名推断 tag 和 channel */
 function parseFromFolderName(name: string): { tag: string; channel: 'stable' | 'mono' } | null {
   const lower = name.toLowerCase();
   const channel: 'stable' | 'mono' = lower.includes('mono') ? 'mono' : 'stable';
@@ -252,7 +296,7 @@ interface LaunchContext {
 /** 启动 Godot 打开项目 */
 export async function launchProject(ctx: LaunchContext): Promise<{ logFile: string; pid: number | null }> {
   const { version, project, options } = ctx;
-  if (!version) throw new Error('未指定 Godot 版本');
+  if (!version) throw new Error('未指定 Godot版本');
   const args = [...GODOT_DEFAULT_ARGS];
   args.push('--path', project.path);
   const extras = options.extraArgs ?? [];
@@ -285,23 +329,4 @@ export async function launchProject(ctx: LaunchContext): Promise<{ logFile: stri
   if (options.detached) child.unref();
 
   return { logFile, pid: child.pid ?? null };
-}
-
-/** 对已安装版本按版本号降序排序(stable 优先于 mono) */
-export function sortInstalled(list: GodotVersion[]): GodotVersion[] {
-  const asReleases = list.map((v) => ({
-    tag: v.tag,
-    label: v.label,
-    channel: v.channel,
-    platform: v.platform,
-    downloadUrl: '',
-    sizeBytes: v.sizeBytes,
-    prerelease: false,
-    publishedAt: v.installedAt
-  }));
-  const sorted = sortReleases(asReleases);
-  const map = new Map(list.map((v) => [v.tag + '|' + v.channel + '|' + v.platform, v]));
-  return sorted
-    .map((r) => map.get(r.tag + '|' + r.channel + '|' + r.platform))
-    .filter((v): v is GodotVersion => !!v);
 }

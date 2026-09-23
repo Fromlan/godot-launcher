@@ -8,6 +8,7 @@ import { listLogFiles, readLogTail, clearAllLogs } from '../utils/logFile';
 import { flushLogs } from '../utils/logger';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { toIpc } from './result';
 
 export function bindSystemIpc(): void {
@@ -45,8 +46,15 @@ export function bindSystemIpc(): void {
     (): Promise<IpcResult<void>> =>
       toIpc(async () => {
         const dir = getLogsDir();
+        // path traversal 防御:dir 必须在 getLogsDir() 内
+        const resolved = path.resolve(dir);
+        const base = path.resolve(getLogsDir());
+        const rel = path.relative(base, resolved);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          throw new Error('invalid logs dir: ' + resolved);
+        }
         await fs.mkdir(dir, { recursive: true });
-        spawn("explorer.exe", [dir], { detached: true, stdio: "ignore" }).unref();
+        spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' }).unref();
       })
   );
 
